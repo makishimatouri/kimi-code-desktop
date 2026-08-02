@@ -20,7 +20,7 @@
 
 Kimi Code Desktop 将 Kimi Code 的终端智能体能力带进一个专注、可视、可管理的桌面界面。它不是另一套 AI 运行时：会话、模型、工具调用与智能体能力仍由用户安装的 Kimi Code CLI 提供，桌面端通过 ACP（`kimi acp`）连接，并负责交互、工作区呈现与 Windows / macOS 系统集成。
 
-> 当前源码版本为 `1.1.2`，面向 Windows 与 macOS（Intel 与 Apple Silicon）。
+> 当前源码版本为 `1.1.3`，面向 Windows 与 macOS（Intel 与 Apple Silicon）。
 
 ## 你可以用它做什么
 
@@ -32,7 +32,7 @@ Kimi Code Desktop 将 Kimi Code 的终端智能体能力带进一个专注、可
 - **查看用量与上下文**：展示当前上下文窗口、Token 明细、平台额度，以及今日 / 7 天 / 30 天本地用量趋势；`/usage` 与 `/status` 会在 Composer 上方即时呈现结果。
 - **任务状态一目了然**：状态条实时显示 `[N task running]`（与 CLI 一致）；后台任务与 Cron 调度在 Tasks 面板只读展示；子代理步骤支持任意层级嵌套，子代理派生的子代理也有独立可折叠视图。
 - **融入 Windows**：提供系统托盘、任务完成与审批通知、全局快捷键，并确保重复启动时聚焦已有窗口。
-- **原生 macOS 体验**：Intel 与 Apple Silicon 原生构建、Finder 中显示、`super+shift+k` 快捷键、原生菜单（含界面语言切换）、自动探测 Homebrew / uv 安装的 Kimi CLI。
+- **原生 macOS 体验**：Intel 与 Apple Silicon 原生构建、Finder 中显示、`super+shift+k` 快捷键、原生菜单（含界面语言切换）、自动探测 `~/.kimi-code/bin`、Homebrew / uv 安装的 Kimi CLI。
 - **中英界面即时切换**：界面语言支持跟随系统 / English / 简体中文，无需重启。
 - **直接管理运行时配置**：在设置中切换深浅主题、编辑全局配置与原始 `config.toml`、管理 MCP Server，并可启用与配置实验性的 Secondary model。
 
@@ -59,7 +59,7 @@ React 19 + Vite
 
 ### 1. 安装并配置 Kimi Code CLI
 
-确保 `kimi` 命令位于 `PATH`，并在 `~/.kimi-code/config.toml` 中配置可用的模型与 provider。
+确保 `kimi` 命令位于 `PATH`，并在 `~/.kimi-code/config.toml` 中配置可用的模型与 provider。macOS 桌面端也会自动搜索官方安装器使用的 `~/.kimi-code/bin`。
 
 macOS / Linux：
 
