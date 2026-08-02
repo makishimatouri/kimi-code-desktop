@@ -230,16 +230,49 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: bash scripts/release-macos.sh
 
-      - name: Verify Intel application architecture
+      - name: Verify Intel DMG and application architecture
         run: |
           set -euo pipefail
-          binary="src-tauri/target/x86_64-apple-darwin/release/bundle/macos/Kimi Code.app/Contents/MacOS/kimi-code-desktop"
-          test -f "$binary"
+          bundle_dir="src-tauri/target/x86_64-apple-darwin/release/bundle/dmg"
+          dmg="$(find "$bundle_dir" -maxdepth 1 -type f -name '*_x64.dmg' -print -quit)"
+          checksums="$bundle_dir/SHA256SUMS-macos-x64.txt"
+          manifest="$bundle_dir/release-manifest-macos-x64.json"
+          test -n "$dmg"
+          test -f "$checksums"
+          test -f "$manifest"
+
+          (
+            cd "$bundle_dir"
+            shasum -a 256 -c "$(basename "$checksums")"
+          )
+
+          dmg_name="$(basename "$dmg")"
+          dmg_bytes="$(stat -f '%z' "$dmg")"
+          dmg_sha256="$(shasum -a 256 "$dmg" | awk '{print $1}')"
+          jq -e \
+            --arg name "$dmg_name" \
+            --arg sha256 "$dmg_sha256" \
+            --argjson bytes "$dmg_bytes" \
+            '.arch == "x86_64" and
+             .target == "x86_64-apple-darwin" and
+             .files.dmg.name == $name and
+             .files.dmg.bytes == $bytes and
+             .files.dmg.sha256 == $sha256' \
+            "$manifest" >/dev/null
+
+          mount_point="$(mktemp -d)"
+          cleanup() {
+            hdiutil detach "$mount_point" >/dev/null 2>&1 || true
+            rmdir "$mount_point" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount_point" "$dmg" >/dev/null
+
+          binary="$(find "$mount_point" -type f -path '*/Contents/MacOS/kimi-code-desktop' -print -quit)"
+          test -n "$binary"
           file "$binary"
           file "$binary" | grep -q 'x86_64'
           test "$(lipo -archs "$binary")" = "x86_64"
-          manifest="src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/release-manifest-macos-x64.json"
-          jq -e '.arch == "x86_64" and .target == "x86_64-apple-darwin"' "$manifest" >/dev/null
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -315,6 +348,32 @@ jobs:
           [[ "$(find release-assets/macos -type f -name 'release-manifest-macos-arm64.json' | wc -l)" -eq 1 ]]
           [[ "$(find release-assets/macos -type f -name 'SHA256SUMS-macos-x64.txt' | wc -l)" -eq 1 ]]
           [[ "$(find release-assets/macos -type f -name 'release-manifest-macos-x64.json' | wc -l)" -eq 1 ]]
+
+          while IFS= read -r checksum_file; do
+            checksum_dir="$(dirname "$checksum_file")"
+            (
+              cd "$checksum_dir"
+              sha256sum -c "$(basename "$checksum_file")"
+            )
+          done < <(find release-assets/macos -type f -name 'SHA256SUMS-macos-*.txt' -print)
+
+          while IFS= read -r manifest; do
+            manifest_dir="$(dirname "$manifest")"
+            dmg_name="$(jq -r '.files.dmg.name' "$manifest")"
+            dmg="${manifest_dir}/${dmg_name}"
+            test -f "$dmg"
+            dmg_bytes="$(stat -c '%s' "$dmg")"
+            dmg_sha256="$(sha256sum "$dmg" | awk '{print $1}')"
+            jq -e \
+              --arg version "$version" \
+              --arg sha256 "$dmg_sha256" \
+              --argjson bytes "$dmg_bytes" \
+              '.version == $version and
+               .platform == "macos" and
+               .files.dmg.bytes == $bytes and
+               .files.dmg.sha256 == $sha256' \
+              "$manifest" >/dev/null
+          done < <(find release-assets/macos -type f -name 'release-manifest-macos-*.json' -print)
 
           notes="Windows MSI and macOS Apple Silicon and Intel DMG release for Kimi Code Desktop $tag."
           notes_path="docs/releases/$tag-notes.md"
