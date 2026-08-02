@@ -134,8 +134,9 @@ jobs:
       - name: ACP smoke test
         run: npm run smoke:acp
 
-      - name: Build macOS ARM64 release
+      - name: Build macOS Apple Silicon release
         env:
+          KIMI_MACOS_TARGET: aarch64-apple-darwin
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -158,12 +159,105 @@ jobs:
             src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/release-manifest-macos-arm64.json
           if-no-files-found: error
 
+  macos-intel:
+    name: macOS Intel x86_64 DMG
+    runs-on: macos-15-intel
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+          components: clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri
+          key: macos-x86_64
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Kimi CLI runtime
+        run: |
+          uv tool install kimi-cli --python "${PYTHON_VERSION}"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Frontend tests and build
+        run: |
+          npm run test
+          npm run build
+
+      - name: Rust host tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Verify Intel host and target
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "x86_64"
+          cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-apple-darwin
+
+      - name: ACP smoke test
+        run: npm run smoke:acp
+
+      - name: Build macOS Intel release
+        env:
+          KIMI_MACOS_TARGET: x86_64-apple-darwin
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: bash scripts/release-macos.sh
+
+      - name: Verify Intel application architecture
+        run: |
+          set -euo pipefail
+          binary="src-tauri/target/x86_64-apple-darwin/release/bundle/macos/Kimi Code.app/Contents/MacOS/kimi-code-desktop"
+          test -f "$binary"
+          file "$binary"
+          file "$binary" | grep -q 'x86_64'
+          test "$(lipo -archs "$binary")" = "x86_64"
+          manifest="src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/release-manifest-macos-x64.json"
+          jq -e '.arch == "x86_64" and .target == "x86_64-apple-darwin"' "$manifest" >/dev/null
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kimi-code-desktop-macos-intel
+          path: |
+            src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/SHA256SUMS-macos-x64.txt
+            src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/release-manifest-macos-x64.json
+          if-no-files-found: error
+
   publish:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
     needs:
       - windows-msi
       - macos-arm64
+      - macos-intel
 
     steps:
       - uses: actions/checkout@v4
@@ -178,7 +272,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: kimi-code-desktop-macos-arm64
-          path: release-assets/macos
+          path: release-assets/macos/arm64
+
+      - name: Download macOS Intel release
+        uses: actions/download-artifact@v4
+        with:
+          name: kimi-code-desktop-macos-intel
+          path: release-assets/macos/intel
 
       - name: Validate and publish release
         env:
@@ -205,14 +305,18 @@ jobs:
           mapfile -t msi_files < <(find release-assets/windows -type f -name '*.msi')
           mapfile -t dmg_files < <(find release-assets/macos -type f -name '*.dmg')
           [[ "${#msi_files[@]}" -eq 1 ]]
-          [[ "${#dmg_files[@]}" -eq 1 ]]
+          [[ "${#dmg_files[@]}" -eq 2 ]]
+          [[ "$(find release-assets/macos -type f -name '*_aarch64.dmg' | wc -l)" -eq 1 ]]
+          [[ "$(find release-assets/macos -type f -name '*_x64.dmg' | wc -l)" -eq 1 ]]
           [[ "$(find release-assets/windows -type f -name 'SHA256SUMS.txt' | wc -l)" -eq 1 ]]
           [[ "$(find release-assets/windows -type f -name 'release-manifest.json' | wc -l)" -eq 1 ]]
           [[ "$(find release-assets/windows -type f -name 'kimi-code-desktop.release.json' | wc -l)" -eq 1 ]]
           [[ "$(find release-assets/macos -type f -name 'SHA256SUMS-macos-arm64.txt' | wc -l)" -eq 1 ]]
           [[ "$(find release-assets/macos -type f -name 'release-manifest-macos-arm64.json' | wc -l)" -eq 1 ]]
+          [[ "$(find release-assets/macos -type f -name 'SHA256SUMS-macos-x64.txt' | wc -l)" -eq 1 ]]
+          [[ "$(find release-assets/macos -type f -name 'release-manifest-macos-x64.json' | wc -l)" -eq 1 ]]
 
-          notes="Windows MSI and macOS Apple Silicon DMG release for Kimi Code Desktop $tag."
+          notes="Windows MSI and macOS Apple Silicon and Intel DMG release for Kimi Code Desktop $tag."
           notes_path="docs/releases/$tag-notes.md"
           notes_args=(--notes "$notes")
           if [[ -f "$notes_path" ]]; then
