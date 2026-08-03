@@ -34,6 +34,7 @@ function renderSidebar(overrides: Partial<SessionsSidebarProps> = {}) {
     onRename: vi.fn(),
     onArchive: vi.fn(),
     onUnarchive: vi.fn(),
+    onArchiveProject: vi.fn().mockResolvedValue(undefined),
     onBulkArchive: vi.fn().mockResolvedValue(undefined),
     onBulkUnarchive: vi.fn().mockResolvedValue(undefined),
     onBulkDelete: vi.fn().mockResolvedValue(undefined),
@@ -127,5 +128,89 @@ describe("SessionsSidebar context menu", () => {
     fireEvent.contextMenu(screen.getByText("会话 abcdef123456"));
     fireEvent.mouseDown(document.body);
     expect(screen.queryByRole("menu", { name: "会话操作" })).toBeNull();
+  });
+
+  it("archives the complete project group even when search hides sessions", async () => {
+    window.localStorage.setItem("kimi-code-desktop.session-group-mode.v1", "project");
+    const first = { ...session("first"), workDir: "/workspace/demo" };
+    const second = { ...session("second"), workDir: "/workspace/demo" };
+    const { props } = renderSidebar({
+      sessions: [first, second],
+      searchQuery: "first",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "归档该项目全部会话" }));
+
+    await waitFor(() =>
+      expect(props.onArchiveProject).toHaveBeenCalledWith(["first", "second"], true),
+    );
+  });
+
+  it("blocks project archive when any session is busy", async () => {
+    window.localStorage.setItem("kimi-code-desktop.session-group-mode.v1", "project");
+    const busy = {
+      ...session("busy"),
+      workDir: "/workspace/demo",
+      status: {
+        sessionId: "busy",
+        state: "busy" as const,
+        seq: 1,
+        updatedAt: new Date(),
+      },
+    };
+    const idle = { ...session("idle"), workDir: "/workspace/demo" };
+    const { props } = renderSidebar({ sessions: [busy, idle] });
+
+    fireEvent.click(screen.getByRole("button", { name: "归档该项目全部会话" }));
+
+    await waitFor(() => expect(toastMocks.error).toHaveBeenCalled());
+    expect(props.onArchiveProject).not.toHaveBeenCalled();
+  });
+
+  it("opens project actions from the folder context menu", async () => {
+    window.localStorage.setItem("kimi-code-desktop.session-group-mode.v1", "project");
+    const first = { ...session("first"), workDir: "/workspace/demo" };
+    const second = { ...session("second"), workDir: "/workspace/demo" };
+    const { props } = renderSidebar({ sessions: [first, second] });
+
+    fireEvent.contextMenu(screen.getByText("demo"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "归档项目全部会话" }));
+
+    await waitFor(() =>
+      expect(props.onArchiveProject).toHaveBeenCalledWith(["first", "second"], true),
+    );
+  });
+
+  it("restores every session in an archived project from its context menu", async () => {
+    window.localStorage.setItem("kimi-code-desktop.session-group-mode.v1", "project");
+    const first = { ...session("first", true), workDir: "/workspace/demo" };
+    const second = { ...session("second", true), workDir: "/workspace/demo" };
+    const { props } = renderSidebar({ sessions: [], archivedSessions: [first, second] });
+
+    fireEvent.click(screen.getByRole("button", { name: "已归档" }));
+    fireEvent.contextMenu(screen.getByText("demo"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "恢复项目全部会话" }));
+
+    await waitFor(() =>
+      expect(props.onArchiveProject).toHaveBeenCalledWith(["first", "second"], false),
+    );
+  });
+
+  it("copies the session ID with the legacy document fallback", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: undefined,
+    });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: vi.fn(() => true),
+    });
+    renderSidebar();
+
+    fireEvent.contextMenu(screen.getByText("会话 abcdef123456"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "复制会话 ID" }));
+
+    await waitFor(() => expect(toastMocks.success).toHaveBeenCalledWith("已复制会话 ID"));
+    expect(document.execCommand).toHaveBeenCalledWith("copy");
   });
 });

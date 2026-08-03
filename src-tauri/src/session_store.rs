@@ -355,6 +355,47 @@ pub fn list_local_sessions() -> Result<Vec<Value>, String> {
     Ok(sessions)
 }
 
+fn comparable_work_dir(work_dir: &str) -> String {
+    let path = Path::new(work_dir.trim());
+    let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let mut value = resolved.to_string_lossy().replace('\\', "/");
+    while value.len() > 1 && value.ends_with('/') {
+        value.pop();
+    }
+    #[cfg(windows)]
+    {
+        value.make_ascii_lowercase();
+    }
+    value
+}
+
+/// Return every locally persisted session whose recorded working directory
+/// belongs to `work_dir`, regardless of its archive state.
+pub fn list_session_ids_for_work_dir(work_dir: &str) -> Result<Vec<String>, String> {
+    let target = work_dir.trim();
+    if target.is_empty() {
+        return Ok(Vec::new());
+    }
+    let target = comparable_work_dir(target);
+
+    let mut session_ids: Vec<String> = list_local_sessions()?
+        .into_iter()
+        .filter_map(|session| {
+            let session_work_dir = session.get("work_dir").and_then(Value::as_str)?;
+            if comparable_work_dir(session_work_dir) == target {
+                session
+                    .get("session_id")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            } else {
+                None
+            }
+        })
+        .collect();
+    session_ids.sort();
+    Ok(session_ids)
+}
+
 fn wire_jsonl_path(session_dir: &Path) -> Option<PathBuf> {
     let legacy = session_dir.join("wire.jsonl");
     if legacy.is_file() {
@@ -1744,6 +1785,32 @@ mod tests {
 
         let sessions = list_local_sessions().expect("list local sessions");
         assert_eq!(sessions, vec![session]);
+    }
+
+    #[test]
+    fn lists_all_session_ids_for_a_project_work_dir() {
+        let (_dir, home) = temp_home("project-session-list");
+        let first = write_session_layout(&home, "hash-one", "session-one");
+        let second = write_session_layout(&home, "hash-two", "session-two");
+        let other = write_session_layout(&home, "hash-other", "session-other");
+        for (path, work_dir) in [
+            (&first, "/workspace/demo"),
+            (&second, "/workspace/demo/"),
+            (&other, "/workspace/other"),
+        ] {
+            fs::write(
+                path.join("state.json"),
+                format!(r#"{{"workDir":"{work_dir}","archived":false}}"#),
+            )
+            .expect("write state");
+        }
+
+        let _lock = set_kimi_code_home(&home);
+        assert_eq!(
+            list_session_ids_for_work_dir("/workspace/demo")
+                .expect("list project sessions"),
+            vec!["session-one", "session-two"]
+        );
     }
 
     #[test]

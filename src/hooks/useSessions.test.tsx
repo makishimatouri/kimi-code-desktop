@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   isTauri: vi.fn(),
   listSessions: vi.fn(),
   updateSession: vi.fn(),
+  updateSessionsArchive: vi.fn(),
+  updateWorkDirArchive: vi.fn(),
 }));
 
 vi.mock("../lib/tauri-api", () => ({
@@ -24,6 +26,8 @@ vi.mock("../lib/tauri-api", () => ({
   listSessions: mocks.listSessions,
   listWorkDirs: vi.fn(),
   updateSession: mocks.updateSession,
+  updateSessionsArchive: mocks.updateSessionsArchive,
+  updateWorkDirArchive: mocks.updateWorkDirArchive,
   uploadSessionFile: vi.fn(),
 }));
 
@@ -71,6 +75,8 @@ describe("useSessions archived preload", () => {
     mocks.isTauri.mockReturnValue(true);
     mocks.listSessions.mockReset();
     mocks.updateSession.mockReset();
+    mocks.updateSessionsArchive.mockReset();
+    mocks.updateWorkDirArchive.mockReset();
   });
 
   async function runIdleCallbacks() {
@@ -338,5 +344,71 @@ describe("useSessions archived preload", () => {
     });
     expect(result.current.sessions.map((item) => item.sessionId)).toEqual(["one", "two"]);
     expect(result.current.archivedSessions.map((item) => item.sessionId)).toEqual(["old"]);
+  });
+
+  it("updates a complete project group through the atomic archive API", async () => {
+    let active = [session("one"), session("two")];
+    let archived: Session[] = [];
+    mocks.listSessions.mockImplementation((args?: { archived?: boolean }) =>
+      Promise.resolve(args?.archived ? [...archived] : [...active]),
+    );
+    mocks.updateSessionsArchive.mockImplementation(
+      async (sessionIds: string[], nextArchived: boolean) => {
+        const moved = active.filter((item) => sessionIds.includes(item.sessionId));
+        active = active.filter((item) => !sessionIds.includes(item.sessionId));
+        archived = [...archived, ...moved.map((item) => ({ ...item, archived: nextArchived }))];
+        return sessionIds;
+      },
+    );
+
+    const { result } = renderHook(() => useSessions(), { wrapper: I18nWrapper });
+    await waitFor(() => expect(result.current.sessions).toHaveLength(2));
+
+    await act(async () => {
+      expect(await result.current.archiveProjectSessions(["one", "two"], true)).toBe(2);
+    });
+
+    expect(mocks.updateSessionsArchive).toHaveBeenCalledWith(["one", "two"], true);
+    expect(result.current.sessions).toHaveLength(0);
+    expect(result.current.archivedSessions.map((item) => item.sessionId)).toEqual(["one", "two"]);
+  });
+
+  it("archives every session on a project workDir, including sessions outside the visible list", async () => {
+    const first = { ...session("one"), workDir: "/workspace/demo" };
+    const second = { ...session("two"), workDir: "/workspace/demo" };
+    const alreadyArchived = { ...session("old", true), workDir: "/workspace/demo" };
+    let active = [first, second];
+    let archived = [alreadyArchived];
+    mocks.listSessions.mockImplementation((args?: { archived?: boolean }) =>
+      Promise.resolve(args?.archived ? [...archived] : [...active]),
+    );
+    mocks.updateWorkDirArchive.mockImplementation(
+      async (_workDir: string, nextArchived: boolean) => {
+        const moved = nextArchived ? [...active] : [...archived];
+        if (nextArchived) {
+          active = [];
+          archived = [...archived, ...moved.map((item) => ({ ...item, archived: true }))];
+        } else {
+          archived = [];
+          active = moved.map((item) => ({ ...item, archived: false }));
+        }
+        return [...active, ...archived].map((item) => item.sessionId);
+      },
+    );
+
+    const { result } = renderHook(() => useSessions(), { wrapper: I18nWrapper });
+    await waitFor(() => expect(result.current.sessions).toHaveLength(2));
+
+    await act(async () => {
+      expect(await result.current.archiveProjectSessions(["one", "two"], true)).toBe(3);
+    });
+
+    expect(mocks.updateWorkDirArchive).toHaveBeenCalledWith("/workspace/demo", true);
+    expect(result.current.sessions).toHaveLength(0);
+    expect(result.current.archivedSessions.map((item) => item.sessionId)).toEqual([
+      "old",
+      "one",
+      "two",
+    ]);
   });
 });

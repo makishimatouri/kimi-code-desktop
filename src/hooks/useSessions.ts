@@ -22,6 +22,8 @@ import {
 	listSessions as tauriListSessions,
 	listWorkDirs as tauriListWorkDirs,
 	updateSession as tauriUpdateSession,
+	updateSessionsArchive as tauriUpdateSessionsArchive,
+	updateWorkDirArchive as tauriUpdateWorkDirArchive,
 	uploadSessionFile as tauriUploadSessionFile,
 	deleteUploadedFile as tauriDeleteUploadedFile,
 } from "../lib/tauri-api";
@@ -110,6 +112,11 @@ type UseSessionsReturn = {
 	archiveSession: (sessionId: string) => Promise<boolean>;
 	/** Unarchive a session */
 	unarchiveSession: (sessionId: string) => Promise<boolean>;
+	/** Archive or restore every session in a project group */
+	archiveProjectSessions: (
+		sessionIds: string[],
+		archived: boolean,
+	) => Promise<number>;
 	/** Bulk archive sessions */
 	bulkArchiveSessions: (sessionIds: string[]) => Promise<number>;
 	/** Bulk unarchive sessions */
@@ -972,6 +979,142 @@ export function useSessions(
 	);
 
 	/**
+	 * Archive or restore a complete project group.
+	 * Tauri performs the busy check and state update as one command. The HTTP
+	 * fallback keeps the same busy preflight before issuing its individual calls.
+	 */
+	const archiveProjectSessions = useCallback(
+		async (sessionIds: string[], archived: boolean): Promise<number> => {
+			const ids = [...new Set(sessionIds)];
+			if (ids.length === 0) return 0;
+
+			try {
+				const knownSessions = [...sessions, ...archivedSessions];
+				const normalizeWorkDir = (candidate: string) =>
+					candidate.replace(/\\/g, "/").replace(/\/+$/, "");
+				const requestedWorkDirs = ids
+					.map((id) =>
+						knownSessions
+							.find((item) => item.sessionId === id)
+							?.workDir?.trim(),
+					)
+					.filter((value): value is string => Boolean(value));
+				const projectWorkDir = requestedWorkDirs[0] ?? null;
+				const sameProject = Boolean(
+					projectWorkDir &&
+						requestedWorkDirs.length === ids.length &&
+						requestedWorkDirs.every(
+							(value) =>
+								normalizeWorkDir(value) === normalizeWorkDir(projectWorkDir),
+						),
+				);
+				const projectIds =
+					sameProject && projectWorkDir
+						? [
+								...new Set(
+									knownSessions
+										.filter(
+											(item) =>
+												item.workDir?.trim() &&
+												normalizeWorkDir(item.workDir) ===
+													normalizeWorkDir(projectWorkDir),
+										)
+										.map((item) => item.sessionId),
+								),
+							]
+						: ids;
+
+				let successfulIds: string[];
+				if (isTauri()) {
+					successfulIds =
+						projectWorkDir && sameProject
+							? await tauriUpdateWorkDirArchive(projectWorkDir, archived)
+							: await tauriUpdateSessionsArchive(projectIds, archived);
+				} else {
+					const busySession = projectIds
+						.map((id) => knownSessions.find((item) => item.sessionId === id))
+						.find((item) => item?.status?.state === "busy");
+					if (busySession) {
+						throw new Error(
+							resolvedLanguage === "zh-CN"
+								? "项目中有会话正在运行，请等待任务完成后再操作。"
+								: "A session in this project is busy. Wait for it to finish before changing the project archive state.",
+						);
+					}
+
+					const basePath = getApiBaseUrl();
+					const results = await Promise.allSettled(
+						projectIds.map(async (sessionId) => {
+							const response = await fetch(
+								`${basePath}/api/sessions/${encodeURIComponent(sessionId)}`,
+								{
+									method: "PATCH",
+									headers: {
+										"Content-Type": "application/json",
+										...getAuthHeader(),
+									},
+									body: JSON.stringify({ archived }),
+								},
+							);
+							if (!response.ok) {
+								const data = await response.json().catch(() => ({}));
+								throw new Error(
+									data.detail || "Failed to update project sessions",
+								);
+							}
+							return sessionId;
+						}),
+					);
+					successfulIds = results
+						.filter(
+							(result): result is PromiseFulfilledResult<string> =>
+								result.status === "fulfilled",
+						)
+						.map((result) => result.value);
+				}
+
+				if (successfulIds.length > 0) {
+					if (archived) {
+						setSessions((current) => {
+							const next = current.filter(
+								(session) => !successfulIds.includes(session.sessionId),
+							);
+							if (successfulIds.includes(selectedSessionId)) {
+								setSelectedSessionId(next[0]?.sessionId ?? "");
+							}
+							return next;
+						});
+					} else {
+						setArchivedSessions((current) =>
+							current.filter(
+								(session) => !successfulIds.includes(session.sessionId),
+							),
+						);
+					}
+					await Promise.all([refreshSessions(), refreshArchivedSessions()]);
+				}
+				return successfulIds.length;
+			} catch (err) {
+				const message =
+					err instanceof Error
+						? err.message
+						: "Failed to update project sessions";
+				console.error("Failed to update project archive state:", err);
+				toast.error(message);
+				return 0;
+			}
+		},
+		[
+			archivedSessions,
+			refreshArchivedSessions,
+			refreshSessions,
+			resolvedLanguage,
+			sessions,
+			selectedSessionId,
+		],
+	);
+
+	/**
 	 * Bulk archive sessions
 	 * Returns the number of successfully archived sessions
 	 */
@@ -1335,6 +1478,7 @@ export function useSessions(
 		renameSession,
 		archiveSession,
 		unarchiveSession,
+		archiveProjectSessions,
 		bulkArchiveSessions,
 		bulkUnarchiveSessions,
 		bulkDeleteSessions,
