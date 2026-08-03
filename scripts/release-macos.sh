@@ -187,6 +187,14 @@ if [[ -z "$DMG_PATH" ]]; then
 fi
 
 DMG_NAME="$(basename "$DMG_PATH")"
+normalized_dmg_name="$(printf '%s' "$DMG_NAME" | tr ' ' '.')"
+if [[ "$normalized_dmg_name" != "$DMG_NAME" ]]; then
+  normalized_dmg_path="$DMG_DIR/$normalized_dmg_name"
+  # GitHub Release uploads normalize spaces to dots; record the final name in metadata.
+  mv "$DMG_PATH" "$normalized_dmg_path"
+  DMG_PATH="$normalized_dmg_path"
+  DMG_NAME="$normalized_dmg_name"
+fi
 DMG_BYTES="$(stat -f '%z' "$DMG_PATH")"
 DMG_SHA256="$(shasum -a 256 "$DMG_PATH" | awk '{print $1}')"
 printf '%s  %s\n' "$DMG_SHA256" "$DMG_NAME" > "$CHECKSUMS"

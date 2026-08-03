@@ -158,9 +158,9 @@ src-tauri\target\release\bundle\msi\Kimi Code_<version>_x64_en-US.msi
 macOS 产物位置：
 
 ```text
-src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Kimi Code_<version>_aarch64.dmg
+src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Kimi.Code_<version>_aarch64.dmg
 src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Kimi Code.app
-src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Kimi Code_<version>_x64.dmg
+src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Kimi.Code_<version>_x64.dmg
 src-tauri/target/x86_64-apple-darwin/release/bundle/macos/Kimi Code.app
 ```
 
