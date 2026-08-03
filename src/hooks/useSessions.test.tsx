@@ -8,6 +8,7 @@ import { useSessions } from "./useSessions";
 const mocks = vi.hoisted(() => ({
   isTauri: vi.fn(),
   listSessions: vi.fn(),
+  updateSession: vi.fn(),
 }));
 
 vi.mock("../lib/tauri-api", () => ({
@@ -22,7 +23,7 @@ vi.mock("../lib/tauri-api", () => ({
   listSessionDirectory: vi.fn(),
   listSessions: mocks.listSessions,
   listWorkDirs: vi.fn(),
-  updateSession: vi.fn(),
+  updateSession: mocks.updateSession,
   uploadSessionFile: vi.fn(),
 }));
 
@@ -69,6 +70,7 @@ describe("useSessions archived preload", () => {
     window.cancelIdleCallback = vi.fn();
     mocks.isTauri.mockReturnValue(true);
     mocks.listSessions.mockReset();
+    mocks.updateSession.mockReset();
   });
 
   async function runIdleCallbacks() {
@@ -201,5 +203,140 @@ describe("useSessions archived preload", () => {
     await act(async () => resolveFirst?.([session("stale-first-result")]));
 
     expect(result.current.sessions[0]?.sessionId).toBe("second-result");
+  });
+
+  it("retries archived refresh after an archive races with the preload", async () => {
+    let archivedCall = 0;
+    let resolvePreload: ((value: Session[]) => void) | undefined;
+    mocks.listSessions.mockImplementation((args?: { archived?: boolean }) => {
+      if (!args?.archived) return Promise.resolve([session("active")]);
+      archivedCall += 1;
+      if (archivedCall === 1) {
+        return new Promise<Session[]>((resolve) => {
+          resolvePreload = resolve;
+        });
+      }
+      return Promise.resolve([session("active", true)]);
+    });
+    mocks.updateSession.mockResolvedValue(session("active", true));
+
+    const { result } = renderHook(() => useSessions(), { wrapper: I18nWrapper });
+    await waitFor(() => expect(result.current.sessions[0]?.sessionId).toBe("active"));
+    await runIdleCallbacks();
+    await waitFor(() => expect(resolvePreload).toBeTypeOf("function"));
+
+    let archivePromise: Promise<boolean> | undefined;
+    await act(async () => {
+      archivePromise = result.current.archiveSession("active");
+    });
+
+    await act(async () => {
+      resolvePreload?.([]);
+    });
+    await waitFor(() => expect(archivedCall).toBe(2));
+    await waitFor(() => expect(result.current.archivedSessions[0]?.sessionId).toBe("active"));
+
+    expect(await archivePromise).toBe(true);
+    expect(result.current.sessions).toHaveLength(0);
+    expect(result.current.archivedSessions[0]?.archived).toBe(true);
+  });
+
+  it("does not restore a session into archived after a stale refresh", async () => {
+    let active = [session("other")];
+    let archived = [session("restored", true)];
+    let archivedCall = 0;
+    let resolvePreload: ((value: Session[]) => void) | undefined;
+    mocks.listSessions.mockImplementation((args?: { archived?: boolean }) => {
+      if (!args?.archived) return Promise.resolve([...active]);
+      archivedCall += 1;
+      if (archivedCall === 1) {
+        return new Promise<Session[]>((resolve) => {
+          resolvePreload = resolve;
+        });
+      }
+      return Promise.resolve([...archived]);
+    });
+    mocks.updateSession.mockImplementation(
+      async ({ sessionId, archived: nextArchived }: { sessionId: string; archived: boolean }) => {
+        const target = archived.find((item) => item.sessionId === sessionId);
+        archived = archived.filter((item) => item.sessionId !== sessionId);
+        if (target && !nextArchived) {
+          active = [...active, { ...target, archived: false }];
+        }
+        return session(sessionId, nextArchived);
+      },
+    );
+
+    const { result } = renderHook(() => useSessions(), { wrapper: I18nWrapper });
+    await waitFor(() => expect(result.current.sessions[0]?.sessionId).toBe("other"));
+    await runIdleCallbacks();
+    await waitFor(() => expect(resolvePreload).toBeTypeOf("function"));
+
+    let restorePromise: Promise<boolean> | undefined;
+    await act(async () => {
+      restorePromise = result.current.unarchiveSession("restored");
+    });
+
+    await act(async () => {
+      resolvePreload?.([session("restored", true)]);
+    });
+    await waitFor(() => expect(archivedCall).toBe(2));
+    await waitFor(() => expect(result.current.archivedSessions).toHaveLength(0));
+
+    expect(await restorePromise).toBe(true);
+    expect(result.current.sessions.map((item) => item.sessionId)).toEqual(["other", "restored"]);
+  });
+
+  it("keeps active and archived lists consistent for single, bulk, and restore actions", async () => {
+    let active = [session("one"), session("two")];
+    let archived = [session("old", true)];
+    mocks.listSessions.mockImplementation((args?: { archived?: boolean }) =>
+      Promise.resolve(args?.archived ? [...archived] : [...active]),
+    );
+    mocks.updateSession.mockImplementation(
+      async ({ sessionId, archived: nextArchived }: { sessionId: string; archived: boolean }) => {
+        if (nextArchived) {
+          const target = active.find((item) => item.sessionId === sessionId);
+          active = active.filter((item) => item.sessionId !== sessionId);
+          if (target) archived = [...archived, { ...target, archived: true }];
+        } else {
+          const target = archived.find((item) => item.sessionId === sessionId);
+          archived = archived.filter((item) => item.sessionId !== sessionId);
+          if (target) active = [...active, { ...target, archived: false }];
+        }
+        return session(sessionId, nextArchived);
+      },
+    );
+
+    const { result } = renderHook(() => useSessions(), { wrapper: I18nWrapper });
+    await waitFor(() => expect(result.current.sessions).toHaveLength(2));
+
+    await act(async () => {
+      expect(await result.current.archiveSession("one")).toBe(true);
+    });
+    expect(result.current.sessions.map((item) => item.sessionId)).toEqual(["two"]);
+    expect(result.current.archivedSessions.map((item) => item.sessionId)).toEqual(["old", "one"]);
+
+    await act(async () => {
+      expect(await result.current.bulkArchiveSessions(["two"])).toBe(1);
+    });
+    expect(result.current.sessions).toHaveLength(0);
+    expect(result.current.archivedSessions.map((item) => item.sessionId)).toEqual([
+      "old",
+      "one",
+      "two",
+    ]);
+
+    await act(async () => {
+      expect(await result.current.unarchiveSession("one")).toBe(true);
+    });
+    expect(result.current.sessions.map((item) => item.sessionId)).toEqual(["one"]);
+    expect(result.current.archivedSessions.map((item) => item.sessionId)).toEqual(["old", "two"]);
+
+    await act(async () => {
+      expect(await result.current.bulkUnarchiveSessions(["two"])).toBe(1);
+    });
+    expect(result.current.sessions.map((item) => item.sessionId)).toEqual(["one", "two"]);
+    expect(result.current.archivedSessions.map((item) => item.sessionId)).toEqual(["old"]);
   });
 });

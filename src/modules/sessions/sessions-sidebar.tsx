@@ -5,6 +5,7 @@ import {
   CheckSquare2,
   ChevronDown,
   ChevronRight,
+  Copy,
   Folder,
   Pencil,
   Plus,
@@ -13,7 +14,8 @@ import {
   X,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { formatRelativeTime } from "@/hooks/utils";
 import type { Session } from "@/lib/api/models";
 import { useI18n } from "@/lib/i18n";
@@ -34,6 +36,8 @@ import {
   STALE_ARCHIVE_DAY_OPTIONS,
   type StaleArchiveDays,
 } from "./stale-sessions";
+
+const SESSION_SKELETON_KEYS = ["one", "two", "three", "four", "five", "six"] as const;
 
 function workDirName(workDir?: string | null): string {
   return workDirGroupLabel(workDir);
@@ -66,10 +70,14 @@ function SessionItem({
   onRename: (title: string) => void;
   onArchive: () => void;
 }) {
-  const { resolvedLanguage } = useI18n();
+  const { resolvedLanguage, t } = useI18n();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(session.title ?? "");
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [contextMenuPosition, setContextMenuPosition] = useState({ left: 0, top: 0 });
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const sessionItemRef = useRef<HTMLDivElement>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!editing) return;
@@ -80,14 +88,79 @@ function SessionItem({
     return () => cancelAnimationFrame(frame);
   }, [editing]);
 
+  useEffect(() => {
+    if (!contextMenu) return;
+    const closeOnPointerDown = (event: MouseEvent) => {
+      if (!contextMenuRef.current?.contains(event.target as Node)) {
+        setContextMenu(null);
+      }
+    };
+    const closeOnKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setContextMenu(null);
+    };
+    document.addEventListener("mousedown", closeOnPointerDown);
+    document.addEventListener("keydown", closeOnKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", closeOnPointerDown);
+      document.removeEventListener("keydown", closeOnKeyDown);
+    };
+  }, [contextMenu]);
+
+  useEffect(() => {
+    const item = sessionItemRef.current;
+    if (!item) return;
+    const openOnContextMenu = (event: MouseEvent) => {
+      event.preventDefault();
+      if (editing || contextMenuRef.current?.contains(event.target as Node)) return;
+      setContextMenu({ x: event.clientX, y: event.clientY });
+      setContextMenuPosition({ left: event.clientX, top: event.clientY });
+    };
+    item.addEventListener("contextmenu", openOnContextMenu);
+    return () => item.removeEventListener("contextmenu", openOnContextMenu);
+  }, [editing]);
+
+  useLayoutEffect(() => {
+    if (!contextMenu) return;
+    const menu = contextMenuRef.current;
+    if (!menu) return;
+    const bounds = menu.getBoundingClientRect();
+    const gutter = 8;
+    setContextMenuPosition({
+      left: Math.max(gutter, Math.min(contextMenu.x, window.innerWidth - bounds.width - gutter)),
+      top: Math.max(gutter, Math.min(contextMenu.y, window.innerHeight - bounds.height - gutter)),
+    });
+  }, [contextMenu]);
+
   const commitRename = () => {
     const next = draft.trim();
     setEditing(false);
     if (next && next !== session.title) onRename(next);
   };
 
+  const startRename = () => {
+    setDraft(session.title ?? "");
+    setContextMenu(null);
+    setEditing(true);
+  };
+
+  const copySessionId = async (value: string, target: "sessionId" | "shortId") => {
+    setContextMenu(null);
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error(t("Clipboard unavailable"));
+      }
+      await navigator.clipboard.writeText(value);
+      toast.success(t(target === "sessionId" ? "Session ID copied" : "Short ID copied"));
+    } catch (error) {
+      toast.error(t("Copy failed"), {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
   return (
     <div
+      ref={sessionItemRef}
       className={cn(
         "group relative w-full rounded-r1 px-2.5 py-1.5 text-left transition-colors",
         selected ? "bg-active" : "hover:bg-hover",
@@ -175,10 +248,7 @@ function SessionItem({
               <button
                 type="button"
                 aria-label="重命名"
-                onClick={() => {
-                  setDraft(session.title ?? "");
-                  setEditing(true);
-                }}
+                onClick={startRename}
                 className="flex size-[22px] items-center justify-center rounded-r1 text-muted hover:bg-active hover:text-foreground"
               >
                 <Pencil size={11} />
@@ -210,6 +280,71 @@ function SessionItem({
             className="flex size-[22px] items-center justify-center rounded-r1 text-muted hover:bg-danger-bg hover:text-danger"
           >
             <Trash2 size={11} />
+          </button>
+        </div>
+      )}
+      {contextMenu && (
+        <div
+          ref={contextMenuRef}
+          role="menu"
+          aria-label={t("Session actions")}
+          style={{
+            left: contextMenuPosition.left,
+            top: contextMenuPosition.top,
+          }}
+          className="fixed z-50 min-w-[170px] rounded-r2 border border-line-strong bg-elevated p-1 shadow-pop"
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => void copySessionId(session.sessionId, "sessionId")}
+            className="flex w-full items-center gap-2 rounded-r1 px-2 py-1.5 text-left text-[11px] text-muted hover:bg-hover hover:text-foreground"
+          >
+            <Copy size={13} /> {t("Copy session ID")}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => void copySessionId(session.sessionId.slice(0, 6), "shortId")}
+            className="flex w-full items-center gap-2 rounded-r1 px-2 py-1.5 text-left text-[11px] text-muted hover:bg-hover hover:text-foreground"
+          >
+            <Copy size={13} /> {t("Copy short ID")}
+          </button>
+          <div className="my-1 border-t border-line" />
+          <button
+            type="button"
+            role="menuitem"
+            onClick={startRename}
+            className="flex w-full items-center gap-2 rounded-r1 px-2 py-1.5 text-left text-[11px] text-muted hover:bg-hover hover:text-foreground"
+          >
+            <Pencil size={13} /> {t("Rename")}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setContextMenu(null);
+              onArchive();
+            }}
+            className="flex w-full items-center gap-2 rounded-r1 px-2 py-1.5 text-left text-[11px] text-muted hover:bg-hover hover:text-foreground"
+          >
+            {mode === "active" ? <Archive size={13} /> : <ArchiveRestore size={13} />}
+            {mode === "active" ? t("Archive session") : t("Restore session")}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setContextMenu(null);
+              onDelete();
+            }}
+            className="flex w-full items-center gap-2 rounded-r1 px-2 py-1.5 text-left text-[11px] text-danger hover:bg-danger-bg"
+          >
+            <Trash2 size={13} /> {t("Delete session")}
           </button>
         </div>
       )}
@@ -501,17 +636,21 @@ export function SessionsSidebar(props: SessionsSidebarProps) {
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {listLoading ? (
-          <div className="flex flex-col gap-2 px-2 py-3" aria-busy="true" aria-label="加载会话中">
-            {Array.from({ length: 6 }).map((_, index) => (
+          <output
+            className="flex flex-col gap-2 px-2 py-3"
+            aria-busy="true"
+            aria-label="加载会话中"
+          >
+            {SESSION_SKELETON_KEYS.map((key) => (
               <div
-                key={`session-skeleton-${index}`}
+                key={`session-skeleton-${key}`}
                 className="h-10 animate-pulse rounded-r2 bg-hover/80"
               />
             ))}
             <p className="px-1 pt-1 text-center font-mono text-[10.5px] text-faint">
               正在加载会话…
             </p>
-          </div>
+          </output>
         ) : groups.length === 0 ? (
           <p className="px-2.5 py-6 text-center font-mono text-[11px] text-faint">
             {props.searchQuery

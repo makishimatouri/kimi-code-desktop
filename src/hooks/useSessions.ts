@@ -250,7 +250,8 @@ export function useSessions(
 	const [searchQuery, setSearchQuery] = useState("");
 	const lastRefreshRef = useRef(0);
 	const refreshRequestIdRef = useRef(0);
-	const archivedRefreshInFlightRef = useRef(false);
+	const archivedRefreshInFlightRef = useRef<Promise<void> | null>(null);
+	const archivedRefreshVersionRef = useRef(0);
 	const archivedPreloadRequestedRef = useRef(false);
 
 	/**
@@ -309,27 +310,56 @@ export function useSessions(
 		if (!enabled) {
 			return;
 		}
-		if (archivedRefreshInFlightRef.current) {
-			return;
+
+		const requestedVersion = ++archivedRefreshVersionRef.current;
+		const inFlight = archivedRefreshInFlightRef.current;
+		if (inFlight) {
+			await inFlight;
+			// A newer caller owns the refresh that supersedes this request.
+			if (requestedVersion !== archivedRefreshVersionRef.current) {
+				return;
+			}
 		}
-		archivedRefreshInFlightRef.current = true;
-		setIsLoadingArchived(true);
+
+		const refresh = (async () => {
+			setIsLoadingArchived(true);
+			try {
+				const archivedList = isTauri()
+					? await fetchAllSessionsPage({ archived: true })
+					: await fetchAllArchivedSessionsHttp();
+
+				// Archive/unarchive can finish while an older list request is in
+				// flight. Never let that older response replace the latest state.
+				if (requestedVersion !== archivedRefreshVersionRef.current) {
+					return;
+				}
+				setArchivedSessions(archivedList);
+				setHasMoreArchivedSessions(false);
+				setHasLoadedArchivedSessions(true);
+			} catch (err) {
+				if (requestedVersion !== archivedRefreshVersionRef.current) {
+					return;
+				}
+				const message =
+					err instanceof Error ? err.message : "Failed to load archived sessions";
+				setError(message);
+				setHasLoadedArchivedSessions(false);
+				toast.error(message);
+				console.error("Failed to refresh archived sessions:", err);
+			} finally {
+				if (requestedVersion === archivedRefreshVersionRef.current) {
+					setIsLoadingArchived(false);
+				}
+			}
+		})();
+
+		archivedRefreshInFlightRef.current = refresh;
 		try {
-			const archivedList = isTauri()
-				? await fetchAllSessionsPage({ archived: true })
-				: await fetchAllArchivedSessionsHttp();
-			setArchivedSessions(archivedList);
-			setHasMoreArchivedSessions(false);
-			setHasLoadedArchivedSessions(true);
-		} catch (err) {
-			const message =
-				err instanceof Error ? err.message : "Failed to load archived sessions";
-			setError(message);
-			toast.error(message);
-			console.error("Failed to refresh archived sessions:", err);
+			await refresh;
 		} finally {
-			archivedRefreshInFlightRef.current = false;
-			setIsLoadingArchived(false);
+			if (archivedRefreshInFlightRef.current === refresh) {
+				archivedRefreshInFlightRef.current = null;
+			}
 		}
 	}, [enabled]);
 
@@ -928,7 +958,7 @@ export function useSessions(
 				setArchivedSessions((current) =>
 					current.filter((s) => s.sessionId !== sessionId),
 				);
-				await refreshSessions();
+				await Promise.all([refreshSessions(), refreshArchivedSessions()]);
 				return true;
 			} catch (err) {
 				const message =
@@ -938,7 +968,7 @@ export function useSessions(
 				return false;
 			}
 		},
-		[refreshSessions],
+		[refreshArchivedSessions, refreshSessions],
 	);
 
 	/**
@@ -1097,7 +1127,7 @@ export function useSessions(
 					setArchivedSessions((current) =>
 						current.filter((s) => !successfulIds.includes(s.sessionId)),
 					);
-					await refreshSessions();
+					await Promise.all([refreshSessions(), refreshArchivedSessions()]);
 				}
 				return successCount;
 			}
@@ -1135,12 +1165,12 @@ export function useSessions(
 				setArchivedSessions((current) =>
 					current.filter((s) => !successfulIds.includes(s.sessionId)),
 				);
-				await refreshSessions();
+				await Promise.all([refreshSessions(), refreshArchivedSessions()]);
 			}
 
 			return successCount;
 		},
-		[refreshSessions],
+		[refreshArchivedSessions, refreshSessions],
 	);
 
 	/**
