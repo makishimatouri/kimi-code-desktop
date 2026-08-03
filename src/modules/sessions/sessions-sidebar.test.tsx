@@ -142,7 +142,11 @@ describe("SessionsSidebar context menu", () => {
     fireEvent.click(screen.getByRole("button", { name: "归档该项目全部会话" }));
 
     await waitFor(() =>
-      expect(props.onArchiveProject).toHaveBeenCalledWith(["first", "second"], true),
+      expect(props.onArchiveProject).toHaveBeenCalledWith(
+        ["first", "second"],
+        true,
+        "/workspace/demo",
+      ),
     );
   });
 
@@ -177,7 +181,11 @@ describe("SessionsSidebar context menu", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "归档项目全部会话" }));
 
     await waitFor(() =>
-      expect(props.onArchiveProject).toHaveBeenCalledWith(["first", "second"], true),
+      expect(props.onArchiveProject).toHaveBeenCalledWith(
+        ["first", "second"],
+        true,
+        "/workspace/demo",
+      ),
     );
   });
 
@@ -192,7 +200,11 @@ describe("SessionsSidebar context menu", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "恢复项目全部会话" }));
 
     await waitFor(() =>
-      expect(props.onArchiveProject).toHaveBeenCalledWith(["first", "second"], false),
+      expect(props.onArchiveProject).toHaveBeenCalledWith(
+        ["first", "second"],
+        false,
+        "/workspace/demo",
+      ),
     );
   });
 

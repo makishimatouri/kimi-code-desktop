@@ -263,7 +263,7 @@ export type SessionsSidebarProps = {
   onRename: (sessionId: string, title: string) => void;
   onArchive: (sessionId: string) => void;
   onUnarchive: (sessionId: string) => void;
-  onArchiveProject: (sessionIds: string[], archived: boolean) => Promise<void>;
+  onArchiveProject: (sessionIds: string[], archived: boolean, workDir?: string) => Promise<void>;
   onBulkArchive: (sessionIds: string[]) => Promise<void>;
   onBulkUnarchive: (sessionIds: string[]) => Promise<void>;
   onBulkDelete: (sessionIds: string[]) => Promise<void>;
@@ -521,6 +521,7 @@ export function SessionsSidebar(props: SessionsSidebarProps) {
   ) => {
     const ids = projectSessions.map((session) => session.sessionId);
     if (ids.length === 0) return;
+    const workDir = projectSessions.find((session) => session.workDir?.trim())?.workDir?.trim();
     const busySession = projectSessions.find((session) => session.status?.state === "busy");
     if (busySession) {
       toast.error(
@@ -544,7 +545,7 @@ export function SessionsSidebar(props: SessionsSidebarProps) {
     setContextMenu(null);
     setBulkBusy(true);
     try {
-      await props.onArchiveProject(ids, archived);
+      await props.onArchiveProject(ids, archived, workDir);
     } finally {
       setBulkBusy(false);
     }

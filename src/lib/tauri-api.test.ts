@@ -10,9 +10,9 @@ vi.mock("@tauri-apps/api/core", () => ({
 import {
   getSessionInfluenceSnapshot,
   listSessions,
+  updateGlobalConfig,
   updateSessionsArchive,
   updateWorkDirArchive,
-  updateGlobalConfig,
   wireListWorkers,
 } from "./tauri-api";
 
@@ -157,6 +157,15 @@ describe("updateWorkDirArchive", () => {
     expect(invokeMock).toHaveBeenCalledWith("update_work_dir_archive", {
       workDir: "/workspace/demo",
       archived: true,
+    });
+  });
+
+  it("forwards visible session IDs as a fallback anchor", async () => {
+    await updateWorkDirArchive("/workspace/demo", true, ["one", "two"]);
+    expect(invokeMock).toHaveBeenCalledWith("update_work_dir_archive", {
+      workDir: "/workspace/demo",
+      archived: true,
+      sessionIds: ["one", "two"],
     });
   });
 });

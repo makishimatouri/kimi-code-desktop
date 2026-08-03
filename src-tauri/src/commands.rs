@@ -508,19 +508,66 @@ pub fn update_sessions_archive(
 pub fn update_work_dir_archive(
     acp_wire: tauri::State<'_, AcpProcessManager>,
     work_dir: String,
+    session_ids: Option<Vec<String>>,
     archived: bool,
 ) -> Result<Vec<String>, String> {
-    let session_ids = session_store::list_session_ids_for_work_dir(&work_dir)?;
+    let mut fallback_ids = Vec::new();
+    let mut seen = HashSet::new();
+    for session_id in session_ids.unwrap_or_default() {
+        if seen.insert(session_id.clone()) {
+            fallback_ids.push(session_id);
+        }
+    }
 
-    for session_id in &session_ids {
+    let mut resolved_ids = if work_dir.trim().is_empty() {
+        Vec::new()
+    } else {
+        session_store::list_session_ids_for_work_dir(&work_dir)?
+    };
+
+    // Older session metadata may expose a display path that does not compare
+    // exactly with the path persisted in state.json. Use a visible session as
+    // an anchor to recover the canonical project path before falling back to
+    // the visible IDs themselves.
+    if resolved_ids.is_empty() {
+        if let Some(session_id) = fallback_ids.first() {
+            if let Some(inferred_work_dir) = session_store::work_dir_for_session_id(session_id)? {
+                resolved_ids = session_store::list_session_ids_for_work_dir(
+                    &inferred_work_dir.to_string_lossy(),
+                )?;
+            }
+        }
+    }
+
+    if resolved_ids.is_empty() {
+        resolved_ids = fallback_ids;
+    }
+
+    if resolved_ids.is_empty() {
+        return Err(format!(
+            "No sessions found for project directory: {}",
+            work_dir.trim()
+        ));
+    }
+
+    let mut unique_ids = Vec::with_capacity(resolved_ids.len());
+    let mut seen = HashSet::new();
+    for session_id in resolved_ids {
+        if seen.insert(session_id.clone()) {
+            unique_ids.push(session_id);
+        }
+    }
+
+    for session_id in &unique_ids {
+        session_store::find_session_dir_by_id_or_err(session_id)?;
         acp_wire.ensure_editable(session_id)?;
     }
 
-    for session_id in &session_ids {
+    for session_id in &unique_ids {
         session_store::update_session_state(session_id, None, Some(archived))?;
     }
 
-    Ok(session_ids)
+    Ok(unique_ids)
 }
 
 #[tauri::command]

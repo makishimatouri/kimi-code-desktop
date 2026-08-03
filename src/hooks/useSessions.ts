@@ -116,6 +116,7 @@ type UseSessionsReturn = {
 	archiveProjectSessions: (
 		sessionIds: string[],
 		archived: boolean,
+		workDir?: string,
 	) => Promise<number>;
 	/** Bulk archive sessions */
 	bulkArchiveSessions: (sessionIds: string[]) => Promise<number>;
@@ -984,7 +985,11 @@ export function useSessions(
 	 * fallback keeps the same busy preflight before issuing its individual calls.
 	 */
 	const archiveProjectSessions = useCallback(
-		async (sessionIds: string[], archived: boolean): Promise<number> => {
+		async (
+			sessionIds: string[],
+			archived: boolean,
+			workDir?: string,
+		): Promise<number> => {
 			const ids = [...new Set(sessionIds)];
 			if (ids.length === 0) return 0;
 
@@ -999,14 +1004,16 @@ export function useSessions(
 							?.workDir?.trim(),
 					)
 					.filter((value): value is string => Boolean(value));
-				const projectWorkDir = requestedWorkDirs[0] ?? null;
+				const explicitWorkDir = workDir?.trim() || null;
+				const projectWorkDir = explicitWorkDir ?? requestedWorkDirs[0] ?? null;
 				const sameProject = Boolean(
 					projectWorkDir &&
-						requestedWorkDirs.length === ids.length &&
-						requestedWorkDirs.every(
-							(value) =>
-								normalizeWorkDir(value) === normalizeWorkDir(projectWorkDir),
-						),
+						(explicitWorkDir ||
+							(requestedWorkDirs.length === ids.length &&
+								requestedWorkDirs.every(
+									(value) =>
+										normalizeWorkDir(value) === normalizeWorkDir(projectWorkDir),
+								))),
 				);
 				const projectIds =
 					sameProject && projectWorkDir
@@ -1028,7 +1035,7 @@ export function useSessions(
 				if (isTauri()) {
 					successfulIds =
 						projectWorkDir && sameProject
-							? await tauriUpdateWorkDirArchive(projectWorkDir, archived)
+							? await tauriUpdateWorkDirArchive(projectWorkDir, archived, projectIds)
 							: await tauriUpdateSessionsArchive(projectIds, archived);
 				} else {
 					const busySession = projectIds

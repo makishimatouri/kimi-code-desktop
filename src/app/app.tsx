@@ -579,8 +579,8 @@ export default function App() {
             onRename={(id, title) => void renameSession(id, title)}
             onArchive={(id) => void archiveSession(id)}
             onUnarchive={(id) => void unarchiveSession(id)}
-            onArchiveProject={async (ids, archived) => {
-              await archiveProjectSessions(ids, archived);
+            onArchiveProject={async (ids, archived, workDir) => {
+              await archiveProjectSessions(ids, archived, workDir);
             }}
             onBulkArchive={async (ids) => {
               await bulkArchiveSessions(ids);

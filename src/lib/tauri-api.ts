@@ -612,11 +612,19 @@ export async function updateSessionsArchive(
   return Array.isArray(raw) ? raw.map(String) : [...sessionIds];
 }
 
-export async function updateWorkDirArchive(workDir: string, archived: boolean): Promise<string[]> {
+export async function updateWorkDirArchive(
+  workDir: string,
+  archived: boolean,
+  sessionIds: string[] = [],
+): Promise<string[]> {
   if (!isTauri()) return Promise.reject(new Error("Not in Tauri"));
-  const raw = await invoke<unknown>("update_work_dir_archive", {
+  const args = {
     workDir,
     archived,
+    ...(sessionIds.length > 0 ? { sessionIds } : {}),
+  };
+  const raw = await invoke<unknown>("update_work_dir_archive", {
+    ...args,
   });
   return Array.isArray(raw) ? raw.map(String) : [];
 }

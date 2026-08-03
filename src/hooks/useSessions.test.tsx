@@ -403,7 +403,10 @@ describe("useSessions archived preload", () => {
       expect(await result.current.archiveProjectSessions(["one", "two"], true)).toBe(3);
     });
 
-    expect(mocks.updateWorkDirArchive).toHaveBeenCalledWith("/workspace/demo", true);
+    expect(mocks.updateWorkDirArchive).toHaveBeenCalledWith("/workspace/demo", true, [
+      "one",
+      "two",
+    ]);
     expect(result.current.sessions).toHaveLength(0);
     expect(result.current.archivedSessions.map((item) => item.sessionId)).toEqual([
       "old",
