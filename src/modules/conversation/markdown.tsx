@@ -1,6 +1,7 @@
 import type { StreamdownProps } from "streamdown";
 import { defaultRehypePlugins, defaultRemarkPlugins, Streamdown } from "streamdown";
 import { cn } from "@/lib/utils";
+import { supportsMermaidRuntime } from "./markdown-capabilities";
 
 const mathPlugin = defaultRemarkPlugins.math;
 const remarkMathWithInline = (
@@ -26,21 +27,6 @@ type FenceState = {
 type FenceOpening = FenceState & {
   languageStart: number;
 };
-
-const canCompileMermaidRegexes = (): boolean => {
-  try {
-    // Mermaid 11 bundles named groups and lookbehind expressions.
-    // biome-ignore lint/complexity/useRegexLiterals: Keep the feature probe parseable on older WebKit.
-    new RegExp("(?<named>.)");
-    // biome-ignore lint/complexity/useRegexLiterals: Keep the feature probe parseable on older WebKit.
-    new RegExp("(?<=.)");
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-const supportsMermaidRuntime = canCompileMermaidRegexes();
 
 const readFenceOpening = (line: string): FenceOpening | null => {
   let index = 0;
