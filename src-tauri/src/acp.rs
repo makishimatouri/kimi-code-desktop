@@ -3813,7 +3813,10 @@ mod session_cwd_tests {
         fs::create_dir_all(&session_dir).expect("session dir");
         fs::write(
             session_dir.join("state.json"),
-            format!(r#"{{"cwd":"{}"}}"#, work_dir.to_string_lossy()),
+            serde_json::to_vec(&serde_json::json!({
+                "cwd": work_dir.to_string_lossy(),
+            }))
+            .expect("state json"),
         )
         .expect("state");
 

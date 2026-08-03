@@ -572,7 +572,10 @@ mod tests {
         std::fs::create_dir_all(&session_dir).expect("session dir");
         std::fs::write(
             session_dir.join("state.json"),
-            format!(r#"{{"cwd":"{}"}}"#, work_dir.to_string_lossy()),
+            serde_json::to_vec(&json!({
+                "cwd": work_dir.to_string_lossy(),
+            }))
+            .expect("state json"),
         )
         .expect("state");
 
@@ -606,7 +609,10 @@ mod tests {
 
         std::fs::write(
             home.join("session_index.jsonl"),
-            format!(r#"{{"workDir":"{}"}}"#, indexed_dir.to_string_lossy()),
+            serde_json::to_string(&json!({
+                "workDir": indexed_dir.to_string_lossy(),
+            }))
+            .expect("session index json"),
         )
         .expect("session index");
         std::fs::write(
@@ -624,7 +630,10 @@ mod tests {
         std::fs::create_dir_all(&local_session).expect("local session");
         std::fs::write(
             local_session.join("state.json"),
-            format!(r#"{{"cwd":"{}"}}"#, session_dir.to_string_lossy()),
+            serde_json::to_vec(&json!({
+                "cwd": session_dir.to_string_lossy(),
+            }))
+            .expect("state json"),
         )
         .expect("state");
 
