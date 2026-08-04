@@ -22,8 +22,6 @@ import {
 	listSessions as tauriListSessions,
 	listWorkDirs as tauriListWorkDirs,
 	updateSession as tauriUpdateSession,
-	updateSessionsArchive as tauriUpdateSessionsArchive,
-	updateWorkDirArchive as tauriUpdateWorkDirArchive,
 	uploadSessionFile as tauriUploadSessionFile,
 	deleteUploadedFile as tauriDeleteUploadedFile,
 } from "../lib/tauri-api";
@@ -212,6 +210,70 @@ async function fetchAllArchivedSessionsHttp(): Promise<Session[]> {
 		offset += page.length;
 	}
 	return all;
+}
+
+async function archiveTauriSessionsIndividually(
+	sessionIds: string[],
+	archived: boolean,
+): Promise<{
+	successfulIds: string[];
+	failedIds: string[];
+	firstError?: unknown;
+}> {
+	const results = await Promise.allSettled(
+		sessionIds.map(async (sessionId) => {
+			await tauriUpdateSession({ sessionId, archived });
+			return sessionId;
+		}),
+	);
+	const successfulIds = results
+		.filter(
+			(result): result is PromiseFulfilledResult<string> =>
+				result.status === "fulfilled",
+		)
+		.map((result) => result.value);
+	const failedIds = results
+		.map((result, index) => (result.status === "rejected" ? sessionIds[index] : null))
+		.filter((sessionId): sessionId is string => sessionId !== null);
+	const firstFailure = results.find(
+		(result): result is PromiseRejectedResult => result.status === "rejected",
+	);
+
+	return { successfulIds, failedIds, firstError: firstFailure?.reason };
+}
+
+function normalizeProjectWorkDir(value: string): string {
+	const normalized = value.trim().replace(/\\/g, "/");
+	if (normalized === "/" || /^[a-zA-Z]:\/$/.test(normalized)) return normalized;
+	return normalized.replace(/\/+$/, "");
+}
+
+async function resolveProjectSessions(
+	workDir: string,
+	fallbackSessions: Session[],
+	knownSessions: Session[],
+): Promise<Session[]> {
+	const candidates = new Map<string, Session>();
+	for (const session of knownSessions) candidates.set(session.sessionId, session);
+
+	const pages = await Promise.allSettled([
+		fetchAllSessionsPage({ archived: false }),
+		fetchAllSessionsPage({ archived: true }),
+	]);
+	for (const page of pages) {
+		if (page.status !== "fulfilled") continue;
+		for (const session of page.value) candidates.set(session.sessionId, session);
+	}
+
+	const target = normalizeProjectWorkDir(workDir);
+	const resolvedSessions = [...candidates.values()]
+		.filter(
+			(session) =>
+				typeof session.workDir === "string" &&
+				normalizeProjectWorkDir(session.workDir) === target,
+		)
+
+	return resolvedSessions.length > 0 ? resolvedSessions : fallbackSessions;
 }
 
 /**
@@ -981,8 +1043,9 @@ export function useSessions(
 
 	/**
 	 * Archive or restore a complete project group.
-	 * Tauri performs the busy check and state update as one command. The HTTP
-	 * fallback keeps the same busy preflight before issuing its individual calls.
+	 * Resolve the complete project first, then reuse the single-session update
+	 * path. This keeps project actions compatible with older local stores and
+	 * lets idle sessions succeed when another session is still busy.
 	 */
 	const archiveProjectSessions = useCallback(
 		async (
@@ -995,8 +1058,6 @@ export function useSessions(
 
 			try {
 				const knownSessions = [...sessions, ...archivedSessions];
-				const normalizeWorkDir = (candidate: string) =>
-					candidate.replace(/\\/g, "/").replace(/\/+$/, "");
 				const requestedWorkDirs = ids
 					.map((id) =>
 						knownSessions
@@ -1012,10 +1073,11 @@ export function useSessions(
 							(requestedWorkDirs.length === ids.length &&
 								requestedWorkDirs.every(
 									(value) =>
-										normalizeWorkDir(value) === normalizeWorkDir(projectWorkDir),
+										normalizeProjectWorkDir(value) ===
+										normalizeProjectWorkDir(projectWorkDir),
 								))),
 				);
-				const projectIds =
+				const fallbackProjectSessions =
 					sameProject && projectWorkDir
 						? [
 								...new Set(
@@ -1023,20 +1085,42 @@ export function useSessions(
 										.filter(
 											(item) =>
 												item.workDir?.trim() &&
-												normalizeWorkDir(item.workDir) ===
-													normalizeWorkDir(projectWorkDir),
+												normalizeProjectWorkDir(item.workDir) ===
+													normalizeProjectWorkDir(projectWorkDir),
 										)
-										.map((item) => item.sessionId),
+										.map((item) => item),
 								),
 							]
-						: ids;
+						: [];
+				const resolvedProjectSessions =
+					sameProject && projectWorkDir
+						? await resolveProjectSessions(
+								projectWorkDir,
+								fallbackProjectSessions.length > 0
+									? fallbackProjectSessions
+									: ids.flatMap((id) => {
+											const session = knownSessions.find((item) => item.sessionId === id);
+											return session ? [session] : [];
+									  }),
+								knownSessions,
+							)
+						: ids.flatMap((id) => {
+								const session = knownSessions.find((item) => item.sessionId === id);
+								return session ? [session] : [];
+						  });
+				const projectIds = resolvedProjectSessions
+					.filter((session) => Boolean(session.archived) !== archived)
+					.map((session) => session.sessionId);
 
 				let successfulIds: string[];
+				let failedIds: string[] = [];
 				if (isTauri()) {
-					successfulIds =
-						projectWorkDir && sameProject
-							? await tauriUpdateWorkDirArchive(projectWorkDir, archived, projectIds)
-							: await tauriUpdateSessionsArchive(projectIds, archived);
+					const result = await archiveTauriSessionsIndividually(projectIds, archived);
+					successfulIds = result.successfulIds;
+					failedIds = result.failedIds;
+					if (successfulIds.length === 0 && failedIds.length > 0) {
+						throw result.firstError;
+					}
 				} else {
 					const busySession = projectIds
 						.map((id) => knownSessions.find((item) => item.sessionId === id))
@@ -1078,6 +1162,14 @@ export function useSessions(
 								result.status === "fulfilled",
 						)
 						.map((result) => result.value);
+				}
+
+				if (failedIds.length > 0 && successfulIds.length > 0) {
+					toast.info(
+						resolvedLanguage === "zh-CN"
+							? `已处理 ${successfulIds.length} 个会话，${failedIds.length} 个忙碌或不可编辑会话未处理。`
+							: `${successfulIds.length} sessions updated; ${failedIds.length} busy or unavailable sessions were skipped.`,
+					);
 				}
 
 				if (successfulIds.length > 0) {

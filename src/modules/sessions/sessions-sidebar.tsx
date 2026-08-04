@@ -522,16 +522,6 @@ export function SessionsSidebar(props: SessionsSidebarProps) {
     const ids = projectSessions.map((session) => session.sessionId);
     if (ids.length === 0) return;
     const workDir = projectSessions.find((session) => session.workDir?.trim())?.workDir?.trim();
-    const busySession = projectSessions.find((session) => session.status?.state === "busy");
-    if (busySession) {
-      toast.error(
-        resolvedLanguage === "zh-CN"
-          ? `「${label}」中有会话正在运行，暂时不能${archived ? "归档" : "恢复"}整个项目。`
-          : `A session in "${label}" is busy. The project cannot be ${archived ? "archived" : "restored"} yet.`,
-      );
-      setContextMenu(null);
-      return;
-    }
     if (
       archived &&
       !window.confirm(

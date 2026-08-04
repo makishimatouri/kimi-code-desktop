@@ -150,7 +150,7 @@ describe("SessionsSidebar context menu", () => {
     );
   });
 
-  it("blocks project archive when any session is busy", async () => {
+  it("lets the hook handle busy sessions without blocking the project action", async () => {
     window.localStorage.setItem("kimi-code-desktop.session-group-mode.v1", "project");
     const busy = {
       ...session("busy"),
@@ -167,8 +167,13 @@ describe("SessionsSidebar context menu", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "归档该项目全部会话" }));
 
-    await waitFor(() => expect(toastMocks.error).toHaveBeenCalled());
-    expect(props.onArchiveProject).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(props.onArchiveProject).toHaveBeenCalledWith(
+        ["busy", "idle"],
+        true,
+        "/workspace/demo",
+      ),
+    );
   });
 
   it("opens project actions from the folder context menu", async () => {

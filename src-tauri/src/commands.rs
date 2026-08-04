@@ -539,20 +539,21 @@ pub fn update_work_dir_archive(
         }
     }
 
-    if resolved_ids.is_empty() {
-        resolved_ids = fallback_ids;
-    }
+    // Keep the visible IDs as anchors even when the local scan only finds a
+    // subset. This covers older metadata layouts and path aliases without
+    // reducing a project action to the currently loaded archive state.
+    let merged_ids = merge_project_session_ids(resolved_ids, fallback_ids);
 
-    if resolved_ids.is_empty() {
+    if merged_ids.is_empty() {
         return Err(format!(
             "No sessions found for project directory: {}",
             work_dir.trim()
         ));
     }
 
-    let mut unique_ids = Vec::with_capacity(resolved_ids.len());
+    let mut unique_ids = Vec::with_capacity(merged_ids.len());
     let mut seen = HashSet::new();
-    for session_id in resolved_ids {
+    for session_id in merged_ids {
         if seen.insert(session_id.clone()) {
             unique_ids.push(session_id);
         }
@@ -568,6 +569,17 @@ pub fn update_work_dir_archive(
     }
 
     Ok(unique_ids)
+}
+
+fn merge_project_session_ids(resolved_ids: Vec<String>, fallback_ids: Vec<String>) -> Vec<String> {
+    let mut merged = Vec::with_capacity(resolved_ids.len() + fallback_ids.len());
+    let mut seen = HashSet::new();
+    for session_id in resolved_ids.into_iter().chain(fallback_ids) {
+        if seen.insert(session_id.clone()) {
+            merged.push(session_id);
+        }
+    }
+    merged
 }
 
 #[tauri::command]
@@ -1343,5 +1355,20 @@ mod tests {
         let err = super::resolve_create_session_work_dir(Some("/nonexistent/path/xyz"), false)
             .unwrap_err();
         assert!(err.contains("does not exist"));
+    }
+
+    #[test]
+    fn project_archive_merges_scanned_and_visible_session_ids() {
+        assert_eq!(
+            super::merge_project_session_ids(
+                vec!["archived".to_string(), "shared".to_string()],
+                vec!["visible".to_string(), "shared".to_string()],
+            ),
+            vec![
+                "archived".to_string(),
+                "shared".to_string(),
+                "visible".to_string()
+            ]
+        );
     }
 }

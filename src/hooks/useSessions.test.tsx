@@ -9,8 +9,6 @@ const mocks = vi.hoisted(() => ({
   isTauri: vi.fn(),
   listSessions: vi.fn(),
   updateSession: vi.fn(),
-  updateSessionsArchive: vi.fn(),
-  updateWorkDirArchive: vi.fn(),
 }));
 
 vi.mock("../lib/tauri-api", () => ({
@@ -26,8 +24,6 @@ vi.mock("../lib/tauri-api", () => ({
   listSessions: mocks.listSessions,
   listWorkDirs: vi.fn(),
   updateSession: mocks.updateSession,
-  updateSessionsArchive: mocks.updateSessionsArchive,
-  updateWorkDirArchive: mocks.updateWorkDirArchive,
   uploadSessionFile: vi.fn(),
 }));
 
@@ -75,8 +71,6 @@ describe("useSessions archived preload", () => {
     mocks.isTauri.mockReturnValue(true);
     mocks.listSessions.mockReset();
     mocks.updateSession.mockReset();
-    mocks.updateSessionsArchive.mockReset();
-    mocks.updateWorkDirArchive.mockReset();
   });
 
   async function runIdleCallbacks() {
@@ -346,18 +340,19 @@ describe("useSessions archived preload", () => {
     expect(result.current.archivedSessions.map((item) => item.sessionId)).toEqual(["old"]);
   });
 
-  it("updates a complete project group through the atomic archive API", async () => {
+  it("updates a complete project group through the single-session archive API", async () => {
     let active = [session("one"), session("two")];
     let archived: Session[] = [];
     mocks.listSessions.mockImplementation((args?: { archived?: boolean }) =>
       Promise.resolve(args?.archived ? [...archived] : [...active]),
     );
-    mocks.updateSessionsArchive.mockImplementation(
-      async (sessionIds: string[], nextArchived: boolean) => {
-        const moved = active.filter((item) => sessionIds.includes(item.sessionId));
-        active = active.filter((item) => !sessionIds.includes(item.sessionId));
-        archived = [...archived, ...moved.map((item) => ({ ...item, archived: nextArchived }))];
-        return sessionIds;
+    mocks.updateSession.mockImplementation(
+      async ({ sessionId, archived: nextArchived }: { sessionId: string; archived: boolean }) => {
+        const target = active.find((item) => item.sessionId === sessionId);
+        if (!target) throw new Error("session not found");
+        active = active.filter((item) => item.sessionId !== sessionId);
+        archived = [...archived, { ...target, archived: nextArchived }];
+        return { ...target, archived: nextArchived };
       },
     );
 
@@ -368,7 +363,9 @@ describe("useSessions archived preload", () => {
       expect(await result.current.archiveProjectSessions(["one", "two"], true)).toBe(2);
     });
 
-    expect(mocks.updateSessionsArchive).toHaveBeenCalledWith(["one", "two"], true);
+    expect(mocks.updateSession).toHaveBeenCalledTimes(2);
+    expect(mocks.updateSession).toHaveBeenCalledWith({ sessionId: "one", archived: true });
+    expect(mocks.updateSession).toHaveBeenCalledWith({ sessionId: "two", archived: true });
     expect(result.current.sessions).toHaveLength(0);
     expect(result.current.archivedSessions.map((item) => item.sessionId)).toEqual(["one", "two"]);
   });
@@ -382,17 +379,19 @@ describe("useSessions archived preload", () => {
     mocks.listSessions.mockImplementation((args?: { archived?: boolean }) =>
       Promise.resolve(args?.archived ? [...archived] : [...active]),
     );
-    mocks.updateWorkDirArchive.mockImplementation(
-      async (_workDir: string, nextArchived: boolean) => {
-        const moved = nextArchived ? [...active] : [...archived];
+    mocks.updateSession.mockImplementation(
+      async ({ sessionId, archived: nextArchived }: { sessionId: string; archived: boolean }) => {
+        const source = nextArchived ? active : archived;
+        const target = source.find((item) => item.sessionId === sessionId);
+        if (!target) throw new Error("session not found");
         if (nextArchived) {
-          active = [];
-          archived = [...archived, ...moved.map((item) => ({ ...item, archived: true }))];
+          active = active.filter((item) => item.sessionId !== sessionId);
+          archived = [...archived, { ...target, archived: true }];
         } else {
-          archived = [];
-          active = moved.map((item) => ({ ...item, archived: false }));
+          archived = archived.filter((item) => item.sessionId !== sessionId);
+          active = [...active, { ...target, archived: false }];
         }
-        return [...active, ...archived].map((item) => item.sessionId);
+        return { ...target, archived: nextArchived };
       },
     );
 
@@ -400,18 +399,140 @@ describe("useSessions archived preload", () => {
     await waitFor(() => expect(result.current.sessions).toHaveLength(2));
 
     await act(async () => {
-      expect(await result.current.archiveProjectSessions(["one", "two"], true)).toBe(3);
+      expect(await result.current.archiveProjectSessions(["one", "two"], true)).toBe(2);
     });
 
-    expect(mocks.updateWorkDirArchive).toHaveBeenCalledWith("/workspace/demo", true, [
-      "one",
-      "two",
-    ]);
+    expect(mocks.updateSession).toHaveBeenCalledTimes(2);
+    expect(mocks.updateSession).not.toHaveBeenCalledWith({ sessionId: "old", archived: true });
     expect(result.current.sessions).toHaveLength(0);
     expect(result.current.archivedSessions.map((item) => item.sessionId)).toEqual([
       "old",
       "one",
       "two",
     ]);
+  });
+
+  it("falls back to visible project IDs when a complete project refresh is unavailable", async () => {
+    const first = { ...session("one"), workDir: "/workspace/demo" };
+    const second = { ...session("two"), workDir: "/workspace/demo" };
+    mocks.listSessions.mockImplementation((args?: { archived?: boolean }) =>
+      args?.archived
+        ? Promise.reject(new Error("archived list unavailable"))
+        : Promise.resolve([first, second]),
+    );
+    mocks.updateSession.mockResolvedValue({ ...first, archived: true });
+
+    const { result } = renderHook(() => useSessions(), { wrapper: I18nWrapper });
+    await waitFor(() => expect(result.current.sessions).toHaveLength(2));
+
+    await act(async () => {
+      expect(await result.current.archiveProjectSessions(["one", "two"], true)).toBe(2);
+    });
+
+    expect(mocks.updateSession).toHaveBeenCalledWith({ sessionId: "one", archived: true });
+    expect(mocks.updateSession).toHaveBeenCalledWith({ sessionId: "two", archived: true });
+  });
+
+  it("restores only archived sessions from a complete project", async () => {
+    const active = { ...session("active"), workDir: "/workspace/demo" };
+    const archived = { ...session("archived", true), workDir: "/workspace/demo" };
+    let activeSessions: Session[] = [active];
+    let archivedSessions: Session[] = [archived];
+    mocks.listSessions.mockImplementation((args?: { archived?: boolean }) =>
+      Promise.resolve(args?.archived ? [...archivedSessions] : [...activeSessions]),
+    );
+    mocks.updateSession.mockImplementation(
+      async ({ sessionId, archived: nextArchived }: { sessionId: string; archived: boolean }) => {
+        const source = nextArchived ? activeSessions : archivedSessions;
+        const target = source.find((item) => item.sessionId === sessionId);
+        if (!target) throw new Error("session not found");
+        if (nextArchived) {
+          activeSessions = activeSessions.filter((item) => item.sessionId !== sessionId);
+          archivedSessions = [...archivedSessions, { ...target, archived: true }];
+        } else {
+          archivedSessions = archivedSessions.filter((item) => item.sessionId !== sessionId);
+          activeSessions = [...activeSessions, { ...target, archived: false }];
+        }
+        return { ...target, archived: nextArchived };
+      },
+    );
+
+    const { result } = renderHook(() => useSessions(), { wrapper: I18nWrapper });
+    await waitFor(() => expect(result.current.sessions).toHaveLength(1));
+
+    await act(async () => {
+      expect(
+        await result.current.archiveProjectSessions(["archived"], false, "/workspace/demo"),
+      ).toBe(1);
+    });
+
+    expect(mocks.updateSession).toHaveBeenCalledWith({
+      sessionId: "archived",
+      archived: false,
+    });
+    expect(result.current.sessions.map((item) => item.sessionId)).toEqual(["active", "archived"]);
+    expect(result.current.archivedSessions).toEqual([]);
+  });
+
+  it("fills missing project IDs when workDir archive returns only part of the group", async () => {
+    const first = { ...session("one"), workDir: "/workspace/demo" };
+    const second = { ...session("two"), workDir: "/workspace/demo" };
+    mocks.listSessions.mockImplementation((args?: { archived?: boolean }) =>
+      Promise.resolve(args?.archived ? [] : [first, second]),
+    );
+    mocks.updateSession.mockResolvedValue({ ...first, archived: true });
+
+    const { result } = renderHook(() => useSessions(), { wrapper: I18nWrapper });
+    await waitFor(() => expect(result.current.sessions).toHaveLength(2));
+
+    await act(async () => {
+      expect(await result.current.archiveProjectSessions(["one", "two"], true)).toBe(2);
+    });
+
+    expect(mocks.updateSession).toHaveBeenCalledWith({ sessionId: "one", archived: true });
+    expect(mocks.updateSession).toHaveBeenCalledWith({ sessionId: "two", archived: true });
+  });
+
+  it("keeps idle sessions archived when a busy project session rejects the fallback", async () => {
+    const busy = {
+      ...session("busy"),
+      workDir: "/workspace/demo",
+      status: {
+        sessionId: "busy",
+        state: "busy" as const,
+        seq: 1,
+        updatedAt: new Date(),
+      },
+    };
+    const idle = { ...session("idle"), workDir: "/workspace/demo" };
+    let active: Session[] = [busy, idle];
+    let archived: Session[] = [];
+    mocks.listSessions.mockImplementation((args?: { archived?: boolean }) =>
+      Promise.resolve(args?.archived ? [...archived] : [...active]),
+    );
+    mocks.updateSession.mockImplementation(
+      async ({ sessionId, archived: nextArchived }: { sessionId: string; archived: boolean }) => {
+        if (sessionId === "busy") throw new Error("busy session");
+        const target = active.find((item) => item.sessionId === sessionId);
+        if (!target) throw new Error("session not found");
+        active = active.filter((item) => item.sessionId !== sessionId);
+        archived = [...archived, { ...target, archived: nextArchived }];
+        return { ...target, archived: nextArchived };
+      },
+    );
+
+    const { result } = renderHook(() => useSessions(), { wrapper: I18nWrapper });
+    await waitFor(() => expect(result.current.sessions).toHaveLength(2));
+
+    await act(async () => {
+      expect(
+        await result.current.archiveProjectSessions(["busy", "idle"], true, "/workspace/demo"),
+      ).toBe(1);
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions.map((item) => item.sessionId)).toEqual(["busy"]);
+      expect(result.current.archivedSessions.map((item) => item.sessionId)).toEqual(["idle"]);
+    });
   });
 });
