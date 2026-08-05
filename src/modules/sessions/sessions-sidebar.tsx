@@ -526,8 +526,8 @@ export function SessionsSidebar(props: SessionsSidebarProps) {
       archived &&
       !window.confirm(
         resolvedLanguage === "zh-CN"
-          ? `确定归档「${label}」下的 ${ids.length} 个会话吗？此操作只改变会话归档状态，不会移动或修改项目文件夹。`
-          : `Archive ${ids.length} sessions in "${label}"? This changes session state only and will not move or modify the project folder.`,
+          ? `确定归档「${label}」下的全部会话吗？此操作只改变会话归档状态，不会移动或修改项目文件夹。`
+          : `Archive all sessions in "${label}"? This changes session state only and will not move or modify the project folder.`,
       )
     ) {
       return;

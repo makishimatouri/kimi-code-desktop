@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import type {
-	Session,
-	SessionStatus,
-	UploadSessionFileResponse,
-} from "../lib/api/models";
+import type { Session, SessionStatus, UploadSessionFileResponse } from "../lib/api/models";
 import { SessionFromJSON } from "../lib/api/models/Session";
 import { apiClient } from "../lib/apiClient";
 import { getAuthHeader, getAuthToken } from "../lib/auth";
@@ -14,6 +10,7 @@ import {
 	isTauri,
 	createSession as tauriCreateSession,
 	deleteSession as tauriDeleteSession,
+	deleteUploadedFile as tauriDeleteUploadedFile,
 	forkSession as tauriForkSession,
 	getSession as tauriGetSession,
 	getSessionFile as tauriGetSessionFile,
@@ -22,13 +19,11 @@ import {
 	listSessions as tauriListSessions,
 	listWorkDirs as tauriListWorkDirs,
 	updateSession as tauriUpdateSession,
+	updateSessionsArchive as tauriUpdateSessionsArchive,
+	updateWorkDirArchive as tauriUpdateWorkDirArchive,
 	uploadSessionFile as tauriUploadSessionFile,
-	deleteUploadedFile as tauriDeleteUploadedFile,
 } from "../lib/tauri-api";
-import {
-	selectSessionsOlderThan,
-	STALE_ARCHIVE_DAYS,
-} from "../modules/sessions/stale-sessions";
+import { selectSessionsOlderThan, STALE_ARCHIVE_DAYS } from "../modules/sessions/stale-sessions";
 import { formatRelativeTime, getApiBaseUrl } from "./utils";
 
 // Regex patterns for path normalization
@@ -210,36 +205,6 @@ async function fetchAllArchivedSessionsHttp(): Promise<Session[]> {
 		offset += page.length;
 	}
 	return all;
-}
-
-async function archiveTauriSessionsIndividually(
-	sessionIds: string[],
-	archived: boolean,
-): Promise<{
-	successfulIds: string[];
-	failedIds: string[];
-	firstError?: unknown;
-}> {
-	const results = await Promise.allSettled(
-		sessionIds.map(async (sessionId) => {
-			await tauriUpdateSession({ sessionId, archived });
-			return sessionId;
-		}),
-	);
-	const successfulIds = results
-		.filter(
-			(result): result is PromiseFulfilledResult<string> =>
-				result.status === "fulfilled",
-		)
-		.map((result) => result.value);
-	const failedIds = results
-		.map((result, index) => (result.status === "rejected" ? sessionIds[index] : null))
-		.filter((sessionId): sessionId is string => sessionId !== null);
-	const firstFailure = results.find(
-		(result): result is PromiseRejectedResult => result.status === "rejected",
-	);
-
-	return { successfulIds, failedIds, firstError: firstFailure?.reason };
 }
 
 function normalizeProjectWorkDir(value: string): string {
@@ -1043,9 +1008,9 @@ export function useSessions(
 
 	/**
 	 * Archive or restore a complete project group.
-	 * Resolve the complete project first, then reuse the single-session update
-	 * path. This keeps project actions compatible with older local stores and
-	 * lets idle sessions succeed when another session is still busy.
+	 * Tauri resolves the project from the persisted work directory in one
+	 * all-or-nothing command. The HTTP path keeps a complete-list fallback for
+	 * environments without the native project command.
 	 */
 	const archiveProjectSessions = useCallback(
 		async (
@@ -1058,6 +1023,7 @@ export function useSessions(
 
 			try {
 				const knownSessions = [...sessions, ...archivedSessions];
+				const native = isTauri();
 				const requestedWorkDirs = ids
 					.map((id) =>
 						knownSessions
@@ -1092,8 +1058,9 @@ export function useSessions(
 								),
 							]
 						: [];
-				const resolvedProjectSessions =
-					sameProject && projectWorkDir
+				const resolvedProjectSessions = native
+					? []
+					: sameProject && projectWorkDir
 						? await resolveProjectSessions(
 								projectWorkDir,
 								fallbackProjectSessions.length > 0
@@ -1114,17 +1081,15 @@ export function useSessions(
 
 				let successfulIds: string[];
 				let failedIds: string[] = [];
-				if (isTauri()) {
-					const result = await archiveTauriSessionsIndividually(projectIds, archived);
-					successfulIds = result.successfulIds;
-					failedIds = result.failedIds;
-					if (successfulIds.length === 0 && failedIds.length > 0) {
-						throw result.firstError;
-					}
+				if (native) {
+					successfulIds =
+						sameProject && projectWorkDir
+							? await tauriUpdateWorkDirArchive(projectWorkDir, archived, ids)
+							: await tauriUpdateSessionsArchive(ids, archived);
 				} else {
-					const busySession = projectIds
-						.map((id) => knownSessions.find((item) => item.sessionId === id))
-						.find((item) => item?.status?.state === "busy");
+					const busySession = resolvedProjectSessions.find(
+						(item) => item.status?.state === "busy",
+					);
 					if (busySession) {
 						throw new Error(
 							resolvedLanguage === "zh-CN"
@@ -1162,6 +1127,11 @@ export function useSessions(
 								result.status === "fulfilled",
 						)
 						.map((result) => result.value);
+					failedIds = results
+						.map((result, index) =>
+							result.status === "rejected" ? projectIds[index] : null,
+						)
+						.filter((sessionId): sessionId is string => sessionId !== null);
 				}
 
 				if (failedIds.length > 0 && successfulIds.length > 0) {

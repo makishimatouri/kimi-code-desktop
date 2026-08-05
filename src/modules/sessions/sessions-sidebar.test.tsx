@@ -141,6 +141,9 @@ describe("SessionsSidebar context menu", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "归档该项目全部会话" }));
 
+    expect(window.confirm).toHaveBeenCalledWith(
+      "确定归档「demo」下的全部会话吗？此操作只改变会话归档状态，不会移动或修改项目文件夹。",
+    );
     await waitFor(() =>
       expect(props.onArchiveProject).toHaveBeenCalledWith(
         ["first", "second"],
@@ -148,6 +151,20 @@ describe("SessionsSidebar context menu", () => {
         "/workspace/demo",
       ),
     );
+  });
+
+  it("does not archive a project when the confirmation is cancelled", async () => {
+    window.confirm = vi.fn(() => false);
+    window.localStorage.setItem("kimi-code-desktop.session-group-mode.v1", "project");
+    const first = { ...session("first"), workDir: "/workspace/demo" };
+    const { props } = renderSidebar({ sessions: [first] });
+
+    fireEvent.click(screen.getByRole("button", { name: "归档该项目全部会话" }));
+
+    expect(window.confirm).toHaveBeenCalledWith(
+      "确定归档「demo」下的全部会话吗？此操作只改变会话归档状态，不会移动或修改项目文件夹。",
+    );
+    expect(props.onArchiveProject).not.toHaveBeenCalled();
   });
 
   it("lets the hook handle busy sessions without blocking the project action", async () => {
