@@ -3822,8 +3822,7 @@ mod session_cwd_tests {
 
         let _home_guard = set_kimi_code_home(&home);
         assert_eq!(
-            resolve_local_session_cwd("session-local-cwd")
-                .expect("resolve local cwd"),
+            resolve_local_session_cwd("session-local-cwd").expect("resolve local cwd"),
             Some(work_dir)
         );
     }

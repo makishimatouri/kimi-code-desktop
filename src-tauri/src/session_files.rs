@@ -296,7 +296,11 @@ pub fn work_dirs_from_metadata() -> Result<Vec<String>, String> {
     if index_path.is_file() {
         let content = fs::read_to_string(&index_path)
             .map_err(|err| format!("Failed to read {}: {err}", index_path.display()))?;
-        for line in content.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        for line in content
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+        {
             let Ok(entry) = serde_json::from_str::<Value>(line) else {
                 continue;
             };
@@ -567,7 +571,10 @@ mod tests {
         std::fs::create_dir_all(&stale_work_dir).expect("stale work dir");
         std::fs::create_dir_all(&home).expect("home");
 
-        let hash = format!("{:x}", md5::compute(stale_work_dir.to_string_lossy().as_bytes()));
+        let hash = format!(
+            "{:x}",
+            md5::compute(stale_work_dir.to_string_lossy().as_bytes())
+        );
         let session_dir = home.join("sessions").join(&hash).join("session-cwd");
         std::fs::create_dir_all(&session_dir).expect("session dir");
         std::fs::write(

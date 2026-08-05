@@ -1849,8 +1849,7 @@ mod tests {
 
         let _lock = set_kimi_code_home(&home);
         assert_eq!(
-            list_session_ids_for_work_dir("/workspace/demo")
-                .expect("list project sessions"),
+            list_session_ids_for_work_dir("/workspace/demo").expect("list project sessions"),
             vec!["session-one", "session-two"]
         );
     }
@@ -1860,11 +1859,8 @@ mod tests {
         let (_dir, home) = temp_home("workspace-session-list");
         let project = _dir.path().join("project");
         fs::create_dir_all(&project).expect("project dir");
-        let session_dir = write_session_layout(
-            &home,
-            "wd_project_d9fb9f27b940",
-            "session-from-workspace",
-        );
+        let session_dir =
+            write_session_layout(&home, "wd_project_d9fb9f27b940", "session-from-workspace");
         fs::write(
             session_dir.join("state.json"),
             serde_json::to_vec(&json!({
