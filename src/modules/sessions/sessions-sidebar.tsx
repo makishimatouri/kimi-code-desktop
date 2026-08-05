@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Copy,
   Folder,
+  LoaderCircle,
   Pencil,
   Plus,
   Search,
@@ -22,6 +23,7 @@ import type { Session } from "@/lib/api/models";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/ui/dialog";
 import { Kbd } from "@/ui/kbd";
 import {
   groupSessionsByDay,
@@ -63,6 +65,12 @@ type ProjectContextMenu = {
 };
 
 type SidebarContextMenu = SessionContextMenu | ProjectContextMenu;
+
+type ProjectArchiveRequest = {
+  archived: boolean;
+  label: string;
+  sessions: Session[];
+};
 
 function SessionItem({
   session,
@@ -263,7 +271,7 @@ export type SessionsSidebarProps = {
   onRename: (sessionId: string, title: string) => void;
   onArchive: (sessionId: string) => void;
   onUnarchive: (sessionId: string) => void;
-  onArchiveProject: (sessionIds: string[], archived: boolean, workDir?: string) => Promise<void>;
+  onArchiveProject: (sessionIds: string[], archived: boolean, workDir?: string) => Promise<number>;
   onBulkArchive: (sessionIds: string[]) => Promise<void>;
   onBulkUnarchive: (sessionIds: string[]) => Promise<void>;
   onBulkDelete: (sessionIds: string[]) => Promise<void>;
@@ -296,6 +304,9 @@ export function SessionsSidebar(props: SessionsSidebarProps) {
   const [multiSelect, setMultiSelect] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [projectActionBusy, setProjectActionBusy] = useState(false);
+  const [projectArchiveConfirmation, setProjectArchiveConfirmation] =
+    useState<ProjectArchiveRequest | null>(null);
   const [staleMenuOpen, setStaleMenuOpen] = useState(false);
   const staleMenuRef = useRef<HTMLDivElement>(null);
   const [contextMenu, setContextMenu] = useState<SidebarContextMenu | null>(null);
@@ -321,6 +332,7 @@ export function SessionsSidebar(props: SessionsSidebarProps) {
     setMultiSelect(false);
     setStaleMenuOpen(false);
     setContextMenu(null);
+    setProjectArchiveConfirmation(null);
   }, [mode]);
 
   useEffect(() => {
@@ -513,37 +525,74 @@ export function SessionsSidebar(props: SessionsSidebarProps) {
     mode === "active"
       ? Boolean(props.isLoadingActive) && props.sessions.length === 0
       : Boolean(props.isLoadingArchived) && props.archivedSessions.length === 0;
+  const actionsBusy = bulkBusy || projectActionBusy;
 
-  const runProjectArchive = async (
-    projectSessions: Session[],
-    label: string,
-    archived: boolean,
-  ) => {
+  const executeProjectArchive = async ({
+    archived,
+    label,
+    sessions: projectSessions,
+  }: ProjectArchiveRequest) => {
     const ids = projectSessions.map((session) => session.sessionId);
     if (ids.length === 0) return;
     const workDir = projectSessions.find((session) => session.workDir?.trim())?.workDir?.trim();
-    if (
-      archived &&
-      !window.confirm(
+
+    setContextMenu(null);
+    setProjectActionBusy(true);
+    try {
+      const updatedCount = await props.onArchiveProject(ids, archived, workDir);
+      if (updatedCount === 0) {
+        toast.error(
+          resolvedLanguage === "zh-CN"
+            ? archived
+              ? `项目「${label}」没有归档任何会话。`
+              : `项目「${label}」没有恢复任何会话。`
+            : archived
+              ? `No sessions in "${label}" were archived.`
+              : `No sessions in "${label}" were restored.`,
+        );
+      }
+    } catch (error) {
+      toast.error(
         resolvedLanguage === "zh-CN"
-          ? `确定归档「${label}」下的全部会话吗？此操作只改变会话归档状态，不会移动或修改项目文件夹。`
-          : `Archive all sessions in "${label}"? This changes session state only and will not move or modify the project folder.`,
-      )
-    ) {
+          ? archived
+            ? `归档项目「${label}」失败`
+            : `恢复项目「${label}」失败`
+          : archived
+            ? `Failed to archive project "${label}"`
+            : `Failed to restore project "${label}"`,
+        {
+          description: error instanceof Error ? error.message : String(error),
+        },
+      );
+    } finally {
+      setProjectActionBusy(false);
+      setProjectArchiveConfirmation(null);
+    }
+  };
+
+  const runProjectArchive = (projectSessions: Session[], label: string, archived: boolean) => {
+    const ids = projectSessions.map((session) => session.sessionId);
+    if (ids.length === 0) return;
+    if (actionsBusy) return;
+
+    const request = { archived, label, sessions: projectSessions };
+    if (archived) {
+      setContextMenu(null);
+      setProjectArchiveConfirmation(request);
       return;
     }
-    setContextMenu(null);
-    setBulkBusy(true);
-    try {
-      await props.onArchiveProject(ids, archived, workDir);
-    } finally {
-      setBulkBusy(false);
-    }
+    void executeProjectArchive(request);
+  };
+
+  const confirmProjectArchive = () => {
+    if (!projectArchiveConfirmation || projectActionBusy) return;
+    void executeProjectArchive(projectArchiveConfirmation);
   };
 
   const runBulk = async (action: "archive" | "restore" | "delete") => {
     const ids = [...selectedIds];
     if (ids.length === 0) return;
+    if (actionsBusy) return;
     if (
       action === "delete" &&
       !window.confirm(
@@ -567,6 +616,7 @@ export function SessionsSidebar(props: SessionsSidebarProps) {
 
   const runArchiveOlderThan = async (days: StaleArchiveDays) => {
     setStaleMenuOpen(false);
+    if (actionsBusy) return;
     if (
       !window.confirm(
         resolvedLanguage === "zh-CN"
@@ -655,8 +705,9 @@ export function SessionsSidebar(props: SessionsSidebarProps) {
         <button
           type="button"
           role="menuitem"
+          disabled={actionsBusy}
           onClick={() =>
-            void runProjectArchive(contextMenu.sessions, contextMenu.label, !contextMenu.archived)
+            runProjectArchive(contextMenu.sessions, contextMenu.label, !contextMenu.archived)
           }
           className="flex w-full items-center gap-2 rounded-r1 px-2 py-1.5 text-left text-[11px] text-muted hover:bg-hover hover:text-foreground"
         >
@@ -734,7 +785,7 @@ export function SessionsSidebar(props: SessionsSidebarProps) {
                   aria-expanded={staleMenuOpen}
                   aria-haspopup="menu"
                   title="一键归档"
-                  disabled={bulkBusy}
+                  disabled={actionsBusy}
                   onClick={() => setStaleMenuOpen((open) => !open)}
                   className={cn(
                     "shrink-0 whitespace-nowrap rounded-r1 px-2 py-1 text-[11px] text-muted hover:bg-hover hover:text-foreground disabled:opacity-50",
@@ -753,7 +804,7 @@ export function SessionsSidebar(props: SessionsSidebarProps) {
                         key={days}
                         type="button"
                         role="menuitem"
-                        disabled={bulkBusy}
+                        disabled={actionsBusy}
                         onClick={() => void runArchiveOlderThan(days)}
                         className="flex w-full px-3 py-1.5 text-left text-[11px] text-muted hover:bg-hover hover:text-foreground disabled:opacity-50"
                       >
@@ -824,14 +875,22 @@ export function SessionsSidebar(props: SessionsSidebarProps) {
                         {projectGroup.items.length}
                       </span>
                     </button>
-                    <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-r1 bg-elevated/95 pl-1">
+                    <div className="pointer-events-auto absolute right-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 rounded-r1 bg-elevated/95 pl-1">
                       <button
                         type="button"
                         aria-label={mode === "active" ? "归档该项目全部会话" : "恢复该项目全部会话"}
-                        disabled={bulkBusy || projectGroup.items.length === 0}
-                        onClick={(event) => {
+                        disabled={
+                          actionsBusy ||
+                          projectArchiveConfirmation !== null ||
+                          projectGroup.items.length === 0
+                        }
+                        onPointerDown={(event) => {
                           event.stopPropagation();
-                          void runProjectArchive(
+                        }}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          runProjectArchive(
                             projectGroup.items,
                             projectGroup.label,
                             mode === "active",
@@ -914,7 +973,7 @@ export function SessionsSidebar(props: SessionsSidebarProps) {
             <div className="flex gap-1.5">
               <Button
                 className="flex-1"
-                disabled={selectedIds.size === 0 || bulkBusy}
+                disabled={selectedIds.size === 0 || actionsBusy}
                 onClick={() => void runBulk(mode === "active" ? "archive" : "restore")}
               >
                 {mode === "active" ? "归档" : "恢复"}
@@ -922,7 +981,7 @@ export function SessionsSidebar(props: SessionsSidebarProps) {
               <Button
                 variant="danger"
                 className="flex-1"
-                disabled={selectedIds.size === 0 || bulkBusy}
+                disabled={selectedIds.size === 0 || actionsBusy}
                 onClick={() => void runBulk("delete")}
               >
                 删除
@@ -931,6 +990,37 @@ export function SessionsSidebar(props: SessionsSidebarProps) {
           </div>
         )}
       </div>
+      <Dialog
+        open={projectArchiveConfirmation !== null}
+        onOpenChange={(open) => {
+          if (!open && !projectActionBusy) setProjectArchiveConfirmation(null);
+        }}
+      >
+        {projectArchiveConfirmation && (
+          <DialogContent aria-busy={projectActionBusy}>
+            <DialogTitle>
+              {t("Archive project")}「{projectArchiveConfirmation.label}」{t("?")}
+            </DialogTitle>
+            <DialogDescription>
+              {t("Archive all")} {projectArchiveConfirmation.sessions.length} {t("sessions")}
+              {t("project archive description")}
+            </DialogDescription>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                disabled={projectActionBusy}
+                onClick={() => setProjectArchiveConfirmation(null)}
+              >
+                {t("Cancel")}
+              </Button>
+              <Button disabled={projectActionBusy} onClick={confirmProjectArchive}>
+                {projectActionBusy && <LoaderCircle size={13} className="animate-spin" />}
+                {projectActionBusy ? t("Archiving…") : t("Confirm archive")}
+              </Button>
+            </div>
+          </DialogContent>
+        )}
+      </Dialog>
       {contextMenuView && typeof document !== "undefined"
         ? createPortal(contextMenuView, document.body)
         : null}

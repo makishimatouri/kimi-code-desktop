@@ -34,7 +34,7 @@ function renderSidebar(overrides: Partial<SessionsSidebarProps> = {}) {
     onRename: vi.fn(),
     onArchive: vi.fn(),
     onUnarchive: vi.fn(),
-    onArchiveProject: vi.fn().mockResolvedValue(undefined),
+    onArchiveProject: vi.fn().mockResolvedValue(2),
     onBulkArchive: vi.fn().mockResolvedValue(undefined),
     onBulkUnarchive: vi.fn().mockResolvedValue(undefined),
     onBulkDelete: vi.fn().mockResolvedValue(undefined),
@@ -139,11 +139,13 @@ describe("SessionsSidebar context menu", () => {
       searchQuery: "first",
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "归档该项目全部会话" }));
+    const archiveButton = screen.getByRole("button", { name: "归档该项目全部会话" });
+    fireEvent.pointerDown(archiveButton);
+    fireEvent.click(archiveButton);
 
-    expect(window.confirm).toHaveBeenCalledWith(
-      "确定归档「demo」下的全部会话吗？此操作只改变会话归档状态，不会移动或修改项目文件夹。",
-    );
+    expect(screen.getByRole("dialog").textContent).toContain("归档项目「demo」？");
+    expect(window.confirm).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "确认归档" }));
     await waitFor(() =>
       expect(props.onArchiveProject).toHaveBeenCalledWith(
         ["first", "second"],
@@ -154,16 +156,14 @@ describe("SessionsSidebar context menu", () => {
   });
 
   it("does not archive a project when the confirmation is cancelled", async () => {
-    window.confirm = vi.fn(() => false);
     window.localStorage.setItem("kimi-code-desktop.session-group-mode.v1", "project");
     const first = { ...session("first"), workDir: "/workspace/demo" };
     const { props } = renderSidebar({ sessions: [first] });
 
     fireEvent.click(screen.getByRole("button", { name: "归档该项目全部会话" }));
 
-    expect(window.confirm).toHaveBeenCalledWith(
-      "确定归档「demo」下的全部会话吗？此操作只改变会话归档状态，不会移动或修改项目文件夹。",
-    );
+    expect(screen.getByRole("dialog")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
     expect(props.onArchiveProject).not.toHaveBeenCalled();
   });
 
@@ -183,6 +183,7 @@ describe("SessionsSidebar context menu", () => {
     const { props } = renderSidebar({ sessions: [busy, idle] });
 
     fireEvent.click(screen.getByRole("button", { name: "归档该项目全部会话" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认归档" }));
 
     await waitFor(() =>
       expect(props.onArchiveProject).toHaveBeenCalledWith(
@@ -201,6 +202,7 @@ describe("SessionsSidebar context menu", () => {
 
     fireEvent.contextMenu(screen.getByText("demo"));
     fireEvent.click(screen.getByRole("menuitem", { name: "归档项目全部会话" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认归档" }));
 
     await waitFor(() =>
       expect(props.onArchiveProject).toHaveBeenCalledWith(
@@ -209,6 +211,23 @@ describe("SessionsSidebar context menu", () => {
         "/workspace/demo",
       ),
     );
+  });
+
+  it("shows an error when the project archive updates no sessions", async () => {
+    window.localStorage.setItem("kimi-code-desktop.session-group-mode.v1", "project");
+    const first = { ...session("first"), workDir: "/workspace/demo" };
+    const { props } = renderSidebar({
+      sessions: [first],
+      onArchiveProject: vi.fn().mockResolvedValue(0),
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "归档该项目全部会话" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认归档" }));
+
+    await waitFor(() =>
+      expect(toastMocks.error).toHaveBeenCalledWith("项目「demo」没有归档任何会话。"),
+    );
+    expect(props.onArchiveProject).toHaveBeenCalledWith(["first"], true, "/workspace/demo");
   });
 
   it("restores every session in an archived project from its context menu", async () => {

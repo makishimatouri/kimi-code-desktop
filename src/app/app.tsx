@@ -580,7 +580,7 @@ export default function App() {
             onArchive={(id) => void archiveSession(id)}
             onUnarchive={(id) => void unarchiveSession(id)}
             onArchiveProject={async (ids, archived, workDir) => {
-              await archiveProjectSessions(ids, archived, workDir);
+              return archiveProjectSessions(ids, archived, workDir);
             }}
             onBulkArchive={async (ids) => {
               await bulkArchiveSessions(ids);
