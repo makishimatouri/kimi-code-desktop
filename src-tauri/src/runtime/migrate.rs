@@ -591,10 +591,12 @@ mod tests {
         let m: Value = serde_json::from_slice(&fs::read(&marker).unwrap()).unwrap();
         assert_eq!(m["name"], "2026-08-source-runtime");
         assert_eq!(m["report"]["v1_sessions"], 1);
-        assert!(m["backup_dir"]
-            .as_str()
-            .unwrap()
-            .starts_with("backups/pre-source-runtime-"));
+        let marker_backup = Path::new(m["backup_dir"].as_str().unwrap());
+        assert_eq!(marker_backup.parent(), Some(Path::new(BACKUP_ROOT)));
+        assert!(marker_backup
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with(&format!("{BACKUP_DIR_PREFIX}-"))));
 
         // Second run: marker present, no new backup.
         let out = ensure_backup_and_marker(h.path(), &preflight_scan(h.path())).unwrap();
