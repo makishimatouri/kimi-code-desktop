@@ -1,5 +1,9 @@
 /** Check desktop + Kimi Code CLI against their GitHub latest releases. */
 
+import { getVersion } from "@tauri-apps/api/app";
+import { useEffect, useState } from "react";
+import { isTauri } from "@/lib/tauri-api";
+
 export const DESKTOP_RELEASES_API =
   "https://api.github.com/repos/P-A-N-52/kimi-code-desktop/releases/latest";
 export const DESKTOP_DOWNLOAD_FALLBACK =
@@ -210,4 +214,46 @@ export async function checkAllUpdates(args: {
     checkCliUpdate(args.cliVersion),
   ]);
   return { desktop, cli };
+}
+
+/** Desktop shell update surfaced to the UI; null when no update is available. */
+export type DesktopUpdate = {
+  currentVersion: string;
+  latestVersion: string;
+  releaseUrl: string;
+};
+
+/**
+ * Check once for a newer desktop release on mount. Never blocks startup:
+ * failures, errors, and "up to date" all leave the state null.
+ */
+export function useDesktopUpdate(): DesktopUpdate | null {
+  const [update, setUpdate] = useState<DesktopUpdate | null>(null);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+
+    let active = true;
+    void (async () => {
+      try {
+        const currentVersion = await getVersion();
+        const result = await checkDesktopUpdate(currentVersion);
+        if (active && result.status === "update-available" && result.latest) {
+          setUpdate({
+            currentVersion: result.current,
+            latestVersion: result.latest,
+            releaseUrl: result.downloadUrl,
+          });
+        }
+      } catch {
+        // Update checks must never block startup or show an error-only state.
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  return update;
 }

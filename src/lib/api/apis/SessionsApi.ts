@@ -15,45 +15,18 @@
 
 import * as runtime from '../runtime';
 import type {
-  CreateSessionRequest,
-  GenerateTitleRequest,
-  GenerateTitleResponse,
-  GitDiffStats,
-  HTTPValidationError,
   Session,
-  UpdateSessionRequest,
   UploadSessionFileResponse,
 } from '../models/index';
 import {
-    CreateSessionRequestFromJSON,
-    CreateSessionRequestToJSON,
-    GenerateTitleRequestFromJSON,
-    GenerateTitleRequestToJSON,
-    GenerateTitleResponseFromJSON,
-    GenerateTitleResponseToJSON,
-    GitDiffStatsFromJSON,
-    GitDiffStatsToJSON,
-    HTTPValidationErrorFromJSON,
-    HTTPValidationErrorToJSON,
     SessionFromJSON,
     SessionToJSON,
-    UpdateSessionRequestFromJSON,
-    UpdateSessionRequestToJSON,
     UploadSessionFileResponseFromJSON,
     UploadSessionFileResponseToJSON,
 } from '../models/index';
 
-export interface CreateSessionApiSessionsPostRequest {
-    createSessionRequest?: CreateSessionRequest;
-}
-
 export interface DeleteSessionApiSessionsSessionIdDeleteRequest {
     sessionId: string;
-}
-
-export interface GenerateSessionTitleApiSessionsSessionIdGenerateTitlePostRequest {
-    sessionId: string;
-    generateTitleRequest?: GenerateTitleRequest;
 }
 
 export interface GetSessionApiSessionsSessionIdGetRequest {
@@ -65,25 +38,11 @@ export interface GetSessionFileApiSessionsSessionIdFilesPathGetRequest {
     path: string;
 }
 
-export interface GetSessionGitDiffApiSessionsSessionIdGitDiffGetRequest {
-    sessionId: string;
-}
-
-export interface GetSessionUploadFileApiSessionsSessionIdUploadsPathGetRequest {
-    sessionId: string;
-    path: string;
-}
-
 export interface ListSessionsApiSessionsGetRequest {
     limit?: number;
     offset?: number;
     q?: string | null;
     archived?: boolean | null;
-}
-
-export interface UpdateSessionApiSessionsSessionIdPatchRequest {
-    sessionId: string;
-    updateSessionRequest: UpdateSessionRequest;
 }
 
 export interface UploadSessionFileApiSessionsSessionIdFilesPostRequest {
@@ -95,40 +54,6 @@ export interface UploadSessionFileApiSessionsSessionIdFilesPostRequest {
  * 
  */
 export class SessionsApi extends runtime.BaseAPI {
-
-    /**
-     * Create a new session.
-     * Create a new session
-     */
-    async createSessionApiSessionsPostRaw(requestParameters: CreateSessionApiSessionsPostRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<Session>> {
-        const queryParameters: any = {};
-
-        const headerParameters: runtime.HTTPHeaders = {};
-
-        headerParameters['Content-Type'] = 'application/json';
-
-
-        let urlPath = `/api/sessions/`;
-
-        const response = await this.request({
-            path: urlPath,
-            method: 'POST',
-            headers: headerParameters,
-            query: queryParameters,
-            body: CreateSessionRequestToJSON(requestParameters['createSessionRequest']),
-        }, initOverrides);
-
-        return new runtime.JSONApiResponse(response, (jsonValue) => SessionFromJSON(jsonValue));
-    }
-
-    /**
-     * Create a new session.
-     * Create a new session
-     */
-    async createSessionApiSessionsPost(requestParameters: CreateSessionApiSessionsPostRequest = {}, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<Session> {
-        const response = await this.createSessionApiSessionsPostRaw(requestParameters, initOverrides);
-        return await response.value();
-    }
 
     /**
      * Delete a session.
@@ -170,48 +95,6 @@ export class SessionsApi extends runtime.BaseAPI {
      */
     async deleteSessionApiSessionsSessionIdDelete(requestParameters: DeleteSessionApiSessionsSessionIdDeleteRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<any> {
         const response = await this.deleteSessionApiSessionsSessionIdDeleteRaw(requestParameters, initOverrides);
-        return await response.value();
-    }
-
-    /**
-     * Generate a concise session title using AI based on the first conversation turn.  If request body is empty or parameters are missing, the backend will automatically read the first turn from wire.jsonl.
-     * Generate session title using AI
-     */
-    async generateSessionTitleApiSessionsSessionIdGenerateTitlePostRaw(requestParameters: GenerateSessionTitleApiSessionsSessionIdGenerateTitlePostRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<GenerateTitleResponse>> {
-        if (requestParameters['sessionId'] == null) {
-            throw new runtime.RequiredError(
-                'sessionId',
-                'Required parameter "sessionId" was null or undefined when calling generateSessionTitleApiSessionsSessionIdGenerateTitlePost().'
-            );
-        }
-
-        const queryParameters: any = {};
-
-        const headerParameters: runtime.HTTPHeaders = {};
-
-        headerParameters['Content-Type'] = 'application/json';
-
-
-        let urlPath = `/api/sessions/{session_id}/generate-title`;
-        urlPath = urlPath.replace(`{${"session_id"}}`, encodeURIComponent(String(requestParameters['sessionId'])));
-
-        const response = await this.request({
-            path: urlPath,
-            method: 'POST',
-            headers: headerParameters,
-            query: queryParameters,
-            body: GenerateTitleRequestToJSON(requestParameters['generateTitleRequest']),
-        }, initOverrides);
-
-        return new runtime.JSONApiResponse(response, (jsonValue) => GenerateTitleResponseFromJSON(jsonValue));
-    }
-
-    /**
-     * Generate a concise session title using AI based on the first conversation turn.  If request body is empty or parameters are missing, the backend will automatically read the first turn from wire.jsonl.
-     * Generate session title using AI
-     */
-    async generateSessionTitleApiSessionsSessionIdGenerateTitlePost(requestParameters: GenerateSessionTitleApiSessionsSessionIdGenerateTitlePostRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<GenerateTitleResponse> {
-        const response = await this.generateSessionTitleApiSessionsSessionIdGenerateTitlePostRaw(requestParameters, initOverrides);
         return await response.value();
     }
 
@@ -306,96 +189,6 @@ export class SessionsApi extends runtime.BaseAPI {
     }
 
     /**
-     * get git diff stats for the session\'s work directory
-     * Get git diff stats
-     */
-    async getSessionGitDiffApiSessionsSessionIdGitDiffGetRaw(requestParameters: GetSessionGitDiffApiSessionsSessionIdGitDiffGetRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<GitDiffStats>> {
-        if (requestParameters['sessionId'] == null) {
-            throw new runtime.RequiredError(
-                'sessionId',
-                'Required parameter "sessionId" was null or undefined when calling getSessionGitDiffApiSessionsSessionIdGitDiffGet().'
-            );
-        }
-
-        const queryParameters: any = {};
-
-        const headerParameters: runtime.HTTPHeaders = {};
-
-
-        let urlPath = `/api/sessions/{session_id}/git-diff`;
-        urlPath = urlPath.replace(`{${"session_id"}}`, encodeURIComponent(String(requestParameters['sessionId'])));
-
-        const response = await this.request({
-            path: urlPath,
-            method: 'GET',
-            headers: headerParameters,
-            query: queryParameters,
-        }, initOverrides);
-
-        return new runtime.JSONApiResponse(response, (jsonValue) => GitDiffStatsFromJSON(jsonValue));
-    }
-
-    /**
-     * get git diff stats for the session\'s work directory
-     * Get git diff stats
-     */
-    async getSessionGitDiffApiSessionsSessionIdGitDiffGet(requestParameters: GetSessionGitDiffApiSessionsSessionIdGitDiffGetRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<GitDiffStats> {
-        const response = await this.getSessionGitDiffApiSessionsSessionIdGitDiffGetRaw(requestParameters, initOverrides);
-        return await response.value();
-    }
-
-    /**
-     * Get a file from a session\'s uploads directory.
-     * Get uploaded file from session uploads
-     */
-    async getSessionUploadFileApiSessionsSessionIdUploadsPathGetRaw(requestParameters: GetSessionUploadFileApiSessionsSessionIdUploadsPathGetRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<any>> {
-        if (requestParameters['sessionId'] == null) {
-            throw new runtime.RequiredError(
-                'sessionId',
-                'Required parameter "sessionId" was null or undefined when calling getSessionUploadFileApiSessionsSessionIdUploadsPathGet().'
-            );
-        }
-
-        if (requestParameters['path'] == null) {
-            throw new runtime.RequiredError(
-                'path',
-                'Required parameter "path" was null or undefined when calling getSessionUploadFileApiSessionsSessionIdUploadsPathGet().'
-            );
-        }
-
-        const queryParameters: any = {};
-
-        const headerParameters: runtime.HTTPHeaders = {};
-
-
-        let urlPath = `/api/sessions/{session_id}/uploads/{path}`;
-        urlPath = urlPath.replace(`{${"session_id"}}`, encodeURIComponent(String(requestParameters['sessionId'])));
-        urlPath = urlPath.replace(`{${"path"}}`, encodeURIComponent(String(requestParameters['path'])));
-
-        const response = await this.request({
-            path: urlPath,
-            method: 'GET',
-            headers: headerParameters,
-            query: queryParameters,
-        }, initOverrides);
-
-        if (this.isJsonMime(response.headers.get('content-type'))) {
-            return new runtime.JSONApiResponse<any>(response);
-        } else {
-            return new runtime.TextApiResponse(response) as any;
-        }
-    }
-
-    /**
-     * Get a file from a session\'s uploads directory.
-     * Get uploaded file from session uploads
-     */
-    async getSessionUploadFileApiSessionsSessionIdUploadsPathGet(requestParameters: GetSessionUploadFileApiSessionsSessionIdUploadsPathGetRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<any> {
-        const response = await this.getSessionUploadFileApiSessionsSessionIdUploadsPathGetRaw(requestParameters, initOverrides);
-        return await response.value();
-    }
-
-    /**
      * List sessions with optional pagination and search.  Args:     limit: Maximum number of sessions to return (default 100, max 500).     offset: Number of sessions to skip (default 0).     q: Optional search query to filter by title or work_dir.     archived: Filter by archived status.         - None (default): Only return non-archived sessions.         - True: Only return archived sessions.
      * List all sessions
      */
@@ -439,55 +232,6 @@ export class SessionsApi extends runtime.BaseAPI {
      */
     async listSessionsApiSessionsGet(requestParameters: ListSessionsApiSessionsGetRequest = {}, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<Array<Session>> {
         const response = await this.listSessionsApiSessionsGetRaw(requestParameters, initOverrides);
-        return await response.value();
-    }
-
-    /**
-     * Update a session (e.g., rename title or archive/unarchive).
-     * Update session
-     */
-    async updateSessionApiSessionsSessionIdPatchRaw(requestParameters: UpdateSessionApiSessionsSessionIdPatchRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<Session>> {
-        if (requestParameters['sessionId'] == null) {
-            throw new runtime.RequiredError(
-                'sessionId',
-                'Required parameter "sessionId" was null or undefined when calling updateSessionApiSessionsSessionIdPatch().'
-            );
-        }
-
-        if (requestParameters['updateSessionRequest'] == null) {
-            throw new runtime.RequiredError(
-                'updateSessionRequest',
-                'Required parameter "updateSessionRequest" was null or undefined when calling updateSessionApiSessionsSessionIdPatch().'
-            );
-        }
-
-        const queryParameters: any = {};
-
-        const headerParameters: runtime.HTTPHeaders = {};
-
-        headerParameters['Content-Type'] = 'application/json';
-
-
-        let urlPath = `/api/sessions/{session_id}`;
-        urlPath = urlPath.replace(`{${"session_id"}}`, encodeURIComponent(String(requestParameters['sessionId'])));
-
-        const response = await this.request({
-            path: urlPath,
-            method: 'PATCH',
-            headers: headerParameters,
-            query: queryParameters,
-            body: UpdateSessionRequestToJSON(requestParameters['updateSessionRequest']),
-        }, initOverrides);
-
-        return new runtime.JSONApiResponse(response, (jsonValue) => SessionFromJSON(jsonValue));
-    }
-
-    /**
-     * Update a session (e.g., rename title or archive/unarchive).
-     * Update session
-     */
-    async updateSessionApiSessionsSessionIdPatch(requestParameters: UpdateSessionApiSessionsSessionIdPatchRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<Session> {
-        const response = await this.updateSessionApiSessionsSessionIdPatchRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

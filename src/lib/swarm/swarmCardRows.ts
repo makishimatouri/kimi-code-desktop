@@ -1,7 +1,10 @@
-import type { AgentTask, AgentTaskStatus } from "@/lib/agent-monitor/store";
+import type { LiveMessage } from "@/hooks/types";
+import type { AgentTask } from "@/lib/agent-monitor/store";
 import type { SwarmResult, SwarmResultSubagent } from "./parseSwarmResult";
 
 export type SwarmPhase = "queued" | "working" | "suspended" | "completed" | "failed";
+
+type ToolCall = NonNullable<LiveMessage["toolCall"]>;
 
 export interface SwarmMember {
   id: string;
@@ -46,6 +49,36 @@ export function phaseForAgentTask(task: AgentTask): SwarmPhase {
   return "working";
 }
 
+/** Phase labels shared by the agent and swarm tool cards. */
+export const PHASE_LABEL: Record<SwarmPhase, string> = {
+  completed: "已完成",
+  working: "运行中",
+  suspended: "已暂停",
+  failed: "失败",
+  queued: "排队中",
+};
+
+/** Tailwind text class per phase, shared by the agent and swarm tool cards. */
+export function phaseTextClass(phase: SwarmPhase): string {
+  switch (phase) {
+    case "completed":
+      return "text-success";
+    case "failed":
+      return "text-danger";
+    case "working":
+      return "text-foreground";
+    case "suspended":
+      return "text-warn";
+    default:
+      return "text-faint";
+  }
+}
+
+/** Tool-call states that mean input is still streaming/available, never done. */
+export function isToolRunning(state: ToolCall["state"]): boolean {
+  return state === "input-streaming" || state === "input-available";
+}
+
 export function agentTaskToSwarmMember(task: AgentTask): SwarmMember {
   return {
     id: task.id,
@@ -67,11 +100,57 @@ export function resolveSwarmMembers(
   tasks: AgentTask[],
   parentToolCallId: string | undefined,
 ): SwarmMember[] {
+  return resolveSwarmTasks(tasks, parentToolCallId).map(agentTaskToSwarmMember);
+}
+
+function compareAgentTasks(left: AgentTask, right: AgentTask): number {
+  return (
+    (left.swarmIndex ?? Number.MAX_SAFE_INTEGER) -
+      (right.swarmIndex ?? Number.MAX_SAFE_INTEGER) || left.id.localeCompare(right.id)
+  );
+}
+
+/**
+ * Resolve one Swarm card's direct members plus every recursively spawned
+ * descendant. Each nested AgentSwarm call has its own tool-call id, so the
+ * stable lineage after the first level is `parentAgentId`, not call-id
+ * equality with the root card.
+ */
+export function resolveSwarmTasks(
+  tasks: AgentTask[],
+  parentToolCallId: string | undefined,
+): AgentTask[] {
   if (!parentToolCallId) return [];
-  return tasks
-    .filter((task) => task.parentToolCallId === parentToolCallId)
-    .map(agentTaskToSwarmMember)
-    .sort((a, b) => a.swarmIndex - b.swarmIndex || a.id.localeCompare(b.id));
+  const direct = tasks.filter((task) => task.parentToolCallId === parentToolCallId);
+  if (direct.length === 0) return [];
+
+  // ACP-era descendants could inherit the root call id. They are direct
+  // candidates but not roots when their parent is another direct candidate.
+  const directIds = new Set(direct.map((task) => task.id));
+  const roots = direct
+    .filter((task) => !task.parentAgentId || !directIds.has(task.parentAgentId))
+    .sort(compareAgentTasks);
+  const children = new Map<string, AgentTask[]>();
+  for (const task of tasks) {
+    if (!task.parentAgentId) continue;
+    const siblings = children.get(task.parentAgentId) ?? [];
+    siblings.push(task);
+    children.set(task.parentAgentId, siblings);
+  }
+  for (const siblings of children.values()) siblings.sort(compareAgentTasks);
+
+  const resolved: AgentTask[] = [];
+  const visited = new Set<string>();
+  const visit = (task: AgentTask) => {
+    if (visited.has(task.id)) return;
+    visited.add(task.id);
+    resolved.push(task);
+    for (const child of children.get(task.id) ?? []) visit(child);
+  };
+  for (const root of roots) visit(root);
+  // Corrupt/cyclic provenance must not hide a direct member completely.
+  for (const candidate of direct.sort(compareAgentTasks)) visit(candidate);
+  return resolved;
 }
 
 function lastNonEmptyLine(text: string | undefined): string {
@@ -152,14 +231,14 @@ export function buildSwarmCardRows(
   }
   roots.sort(compareMembers);
   for (const siblings of children.values()) siblings.sort(compareMembers);
-  const orderedMembers: SwarmMember[] = [];
-  const visit = (member: SwarmMember) => {
-    orderedMembers.push(member);
-    for (const child of children.get(member.id) ?? []) visit(child);
+  const orderedMembers: { member: SwarmMember; relativeDepth: number }[] = [];
+  const visit = (member: SwarmMember, relativeDepth: number) => {
+    orderedMembers.push({ member, relativeDepth });
+    for (const child of children.get(member.id) ?? []) visit(child, relativeDepth + 1);
   };
-  for (const root of roots) visit(root);
+  for (const root of roots) visit(root, 0);
   const memberRows = new Map(
-    orderedMembers.map((member) => [
+    orderedMembers.map(({ member, relativeDepth }) => [
       member.id,
       {
         id: member.id,
@@ -167,8 +246,8 @@ export function buildSwarmCardRows(
         activity: swarmMemberActivity(member),
         phase: member.phase,
         body: swarmMemberBody(member),
-        depth: member.depth,
-        topLevel: member.depth === 0,
+        depth: relativeDepth,
+        topLevel: relativeDepth === 0,
       } satisfies SwarmCardRow,
     ]),
   );
@@ -192,15 +271,17 @@ export function buildSwarmCardRows(
       const root = rootByIndex.get(item.index);
       return root
         ? branchRows(root)
-        : [{
-            id: `planned-${item.index}`,
-            name: item.name,
-            activity: "",
-            phase: "queued" as const,
-            body: "",
-            depth: 0,
-            topLevel: true,
-          }];
+        : [
+            {
+              id: `planned-${item.index}`,
+              name: item.name,
+              activity: "",
+              phase: "queued" as const,
+              body: "",
+              depth: 0,
+              topLevel: true,
+            },
+          ];
     });
     const plannedIndexes = new Set(plannedItems.map((item) => item.index));
     const unplannedMembers = roots
@@ -218,39 +299,11 @@ export function buildSwarmCardRows(
     )
     .map((sub, i) => resultRow(sub, i));
 
-  const orderedRows = orderedMembers.flatMap((member) => {
+  const orderedRows = orderedMembers.flatMap(({ member }) => {
     const row = memberRows.get(member.id);
     return row ? [row] : [];
   });
   return orderedRows.length > 0
     ? [...orderedRows, ...resultOnly]
     : result.subagents.map((s, i) => resultRow(s, i));
-}
-
-export function statusToDotKind(
-  status: AgentTaskStatus | SwarmPhase | "running" | "ok" | "error" | string | undefined,
-): "ok" | "error" | "running" | "suspended" | "idle" {
-  switch (status) {
-    case "ok":
-    case "done":
-    case "completed":
-    case "success":
-      return "ok";
-    case "error":
-    case "failed":
-    case "cancelled":
-    case "danger":
-      return "error";
-    case "running":
-    case "working":
-    case "in_progress":
-    case "active":
-      return "running";
-    case "suspended":
-      return "suspended";
-    case "queued":
-      return "idle";
-    default:
-      return "idle";
-  }
 }

@@ -116,16 +116,50 @@ describe("swarm card rows", () => {
     ]);
   });
 
-  it("resolves swarm members by parentToolCallId and swarmIndex", () => {
+  it("counts a direct member as top-level relative to its own nested swarm", () => {
+    const rows = buildSwarmCardRows(
+      [
+        agentTaskToSwarmMember(
+          task({
+            id: "nested-member",
+            parentToolCallId: "nested-swarm",
+            parentAgentId: "outer-agent",
+            swarmIndex: 0,
+            swarmDepth: 1,
+          }),
+        ),
+      ],
+      null,
+      [{ name: "Nested work", index: 0 }],
+    );
+
+    expect(rows).toEqual([
+      expect.objectContaining({ id: "nested-member", depth: 0, topLevel: true }),
+    ]);
+  });
+
+  it("resolves direct members and descendants with their own nested swarm call ids", () => {
     const members = resolveSwarmMembers(
       [
         task({ id: "b", parentToolCallId: "swarm-1", swarmIndex: 1, description: "Second" }),
         task({ id: "a", parentToolCallId: "swarm-1", swarmIndex: 0, description: "First" }),
+        task({
+          id: "a-child",
+          parentToolCallId: "swarm-inside-a",
+          parentAgentId: "a",
+          swarmIndex: 0,
+        }),
+        task({
+          id: "a-grandchild",
+          parentToolCallId: "swarm-inside-child",
+          parentAgentId: "a-child",
+          swarmIndex: 0,
+        }),
         task({ id: "x", parentToolCallId: "other", swarmIndex: 0 }),
       ],
       "swarm-1",
     );
-    expect(members.map((m) => m.id)).toEqual(["a", "b"]);
+    expect(members.map((m) => m.id)).toEqual(["a", "a-child", "a-grandchild", "b"]);
   });
 
   it("prefers live members and appends aborted result-only rows", () => {

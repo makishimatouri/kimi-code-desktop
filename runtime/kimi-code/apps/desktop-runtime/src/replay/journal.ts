@@ -45,6 +45,16 @@ const STATE_FILE = 'state.json';
 /** Filename-safe agent id (mirrors transcript `isPlainAgentId`). */
 const AGENT_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
 
+export interface ReplayAgentRosterEntry {
+  readonly agentId: string;
+  readonly parentAgentId?: string;
+  readonly parentToolCallId?: string;
+  readonly subagentType?: string;
+  readonly swarmItem?: string;
+  readonly swarmIndex?: number;
+  readonly runInBackground?: boolean;
+}
+
 /** The on-disk directory of one session under the runtime home. */
 export function sessionDirectory(homeDir: string, workspaceId: string, sessionId: string): string {
   return join(homeDir, SESSIONS_ROOT, workspaceId, sessionId);
@@ -126,17 +136,46 @@ export function rebuildAgentSnapshot(records: readonly WireRecord[]): AgentTrans
  * extended with journal directories the metadata does not know. Ids failing
  * the plain-id check never reach the filesystem path join.
  */
-export async function listAgentIds(sessionDir: string): Promise<string[]> {
-  const ids: string[] = [];
-  const push = (id: unknown): void => {
+export async function readAgentRoster(sessionDir: string): Promise<ReplayAgentRosterEntry[]> {
+  const entries = new Map<string, ReplayAgentRosterEntry>();
+  const push = (id: unknown, metadata: Omit<ReplayAgentRosterEntry, 'agentId'> = {}): void => {
     if (typeof id !== 'string' || !AGENT_ID_PATTERN.test(id)) return;
-    if (id === '.' || id === '..' || ids.includes(id)) return;
-    ids.push(id);
+    if (id === '.' || id === '..') return;
+    const existing = entries.get(id);
+    entries.set(id, { agentId: id, ...existing, ...metadata });
   };
   try {
     const meta = JSON.parse(await readFile(join(sessionDir, STATE_FILE), 'utf8')) as SessionMeta;
     push(MAIN_AGENT_ID);
-    for (const id of Object.keys(meta.agents ?? {})) push(id);
+    for (const [id, agent] of Object.entries(meta.agents ?? {})) {
+      const parentAgentId = agent.labels?.['parentAgentId'] ?? agent.parentAgentId ?? undefined;
+      const swarmItem = agent.labels?.['swarmItem'] ?? agent.swarmItem;
+      const parentToolCallId = agent.labels?.['parentToolCallId'];
+      const subagentType = agent.labels?.['subagentType'];
+      const rawSwarmIndex = agent.labels?.['swarmIndex'];
+      const parsedSwarmIndex = rawSwarmIndex === undefined ? undefined : Number(rawSwarmIndex);
+      const rawRunInBackground = agent.labels?.['runInBackground'];
+      push(id, {
+        ...(typeof parentAgentId === 'string' && parentAgentId.length > 0
+          ? { parentAgentId }
+          : {}),
+        ...(typeof parentToolCallId === 'string' && parentToolCallId.length > 0
+          ? { parentToolCallId }
+          : {}),
+        ...(typeof subagentType === 'string' && subagentType.length > 0 ? { subagentType } : {}),
+        ...(typeof swarmItem === 'string' && swarmItem.length > 0 ? { swarmItem } : {}),
+        ...(parsedSwarmIndex !== undefined &&
+        Number.isInteger(parsedSwarmIndex) &&
+        parsedSwarmIndex >= 0
+          ? { swarmIndex: parsedSwarmIndex }
+          : {}),
+        ...(rawRunInBackground === 'true'
+          ? { runInBackground: true }
+          : rawRunInBackground === 'false'
+            ? { runInBackground: false }
+            : {}),
+      });
+    }
   } catch {
     // Missing/corrupt state.json: the directory scan below still finds journals.
   }
@@ -145,6 +184,15 @@ export async function listAgentIds(sessionDir: string): Promise<string[]> {
   } catch {
     // No agents directory: the roster stays as-is (possibly just `main`).
   }
-  if (!ids.includes(MAIN_AGENT_ID)) ids.unshift(MAIN_AGENT_ID);
-  return ids;
+  if (!entries.has(MAIN_AGENT_ID)) {
+    entries.set(MAIN_AGENT_ID, { agentId: MAIN_AGENT_ID });
+  }
+  const roster = [...entries.values()];
+  const mainIndex = roster.findIndex((entry) => entry.agentId === MAIN_AGENT_ID);
+  if (mainIndex > 0) roster.unshift(...roster.splice(mainIndex, 1));
+  return roster;
+}
+
+export async function listAgentIds(sessionDir: string): Promise<string[]> {
+  return (await readAgentRoster(sessionDir)).map((entry) => entry.agentId);
 }

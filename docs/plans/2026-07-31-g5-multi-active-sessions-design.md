@@ -20,7 +20,7 @@
 
 - 多窗口（与 `tauri-plugin-single-instance` 冲突，另立项）
 - `fork-at-turn` UI（`fork_session` 当前明确返回不支持；无 `session/fork` 稳定契约前不设计假入口）
-- 第二条竞争性 ACP RPC 通道（遵守 [acp-rpc-ownership.md](../acp-rpc-ownership.md)）
+- 第二条竞争性 ACP RPC 通道（原约定文档 `acp-rpc-ownership.md` 已随 ACP 移除删除，该条目不再适用）
 - **Web 版单流**（见 §1.1）：G5 仅交付 Tauri Desktop；浏览器构建保持现有单 `useSessionStream` 行为
 
 ### 1.1 平台范围（P2）

@@ -8,7 +8,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  NODE_VERSION: "22"
+  # Keep ordinary CI on the same engine-strict Node version as the vendored
+  # Source Runtime and the release workflow.
+  NODE_VERSION: "24.15.0"
   PYTHON_VERSION: "3.12"
 
 jobs:
@@ -96,6 +98,12 @@ jobs:
         with:
           targets: aarch64-apple-darwin
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+          run_install: false
+
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
@@ -104,6 +112,20 @@ jobs:
 
       - name: Install Node dependencies
         run: npm ci
+
+      - name: Install Source Runtime workspace dependencies
+        run: npm run runtime:install
+
+      - name: Check Source Runtime
+        run: |
+          npm run runtime:typecheck
+          npm run runtime:test
+
+      - name: Source Runtime smoke test
+        run: npm run smoke:runtime
+
+      - name: Build Source Runtime sidecar
+        run: npm run runtime:sea
 
       - name: Check i18n catalog coverage
         run: npm run i18n:check

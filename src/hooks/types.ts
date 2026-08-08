@@ -1,5 +1,5 @@
-import type { ChatStatus, FileUIPart, ToolUIPart } from "ai";
-import type { QuestionItem } from "./wireTypes";
+import type { FileUIPart, ToolUIPart } from "ai";
+import type { QuestionItem, ToolApprovalState } from "./wireTypes";
 
 export type NoPreviewAttachment = {
   kind: "nopreview";
@@ -13,9 +13,6 @@ export type VideoNoPreviewAttachment = {
 };
 
 export type MessageAttachmentPart = FileUIPart | NoPreviewAttachment | VideoNoPreviewAttachment;
-
-// Re-export API types for convenience
-export type { Session } from "../lib/api/models";
 
 /**
  * A single step recorded from a subagent's activity.
@@ -112,23 +109,7 @@ export type LiveMessage = {
     errorText?: string;
     /** Media parts extracted from tool output (images/videos from ReadMediaFile etc.) */
     mediaParts?: Array<{ type: "image_url" | "video_url"; url: string }>;
-    approval?: {
-      id: string;
-      action: string;
-      description: string;
-      sender: string;
-      toolCallId?: string;
-      /** ACP tool kind used for safe auto-approve matching */
-      toolKind?: string | null;
-      submitted?: boolean;
-      resolved?: boolean;
-      approved?: boolean;
-      reason?: string;
-      response?: unknown;
-      feedback?: string;
-      sourceKind?: "foreground_turn" | "background_agent" | null;
-      sourceDescription?: string | null;
-    };
+    approval?: ToolApprovalState;
     question?: {
       id: string;
       toolCallId: string;
@@ -156,45 +137,4 @@ export type LiveMessage = {
     language: string;
     description?: string;
   };
-};
-
-/**
- * Session operations returned by useSessions
- * Uses API types: Session
- */
-export type SessionOperations = {
-  sessions: import("../lib/api/models").Session[];
-  selectedSessionId: string;
-  isLoading: boolean;
-  error: string | null;
-  refreshSessions: () => Promise<void>;
-  loadMoreSessions: () => Promise<void>;
-  hasMoreSessions: boolean;
-  isLoadingMore: boolean;
-  searchQuery: string;
-  setSearchQuery: (query: string) => void;
-  refreshSession: (
-    sessionId: string,
-  ) => Promise<import("../lib/api/models").Session | null>;
-  createSession: () => Promise<import("../lib/api/models").Session>;
-  deleteSession: (sessionId: string) => Promise<boolean>;
-  selectSession: (sessionId: string) => void;
-  applySessionStatus: (
-    status: import("../lib/api/models").SessionStatus,
-  ) => void;
-  getRelativeTime: (session: import("../lib/api/models").Session) => string;
-};
-
-/**
- * Chat operations
- */
-export type ChatOperations = {
-  messages: LiveMessage[];
-  status: ChatStatus;
-  sendMessage: (
-    text: string,
-    attachments?: import("../lib/api/models").UploadSessionFileResponse[],
-  ) => Promise<void>;
-  cancelStream: () => void;
-  clearMessages: () => void;
 };

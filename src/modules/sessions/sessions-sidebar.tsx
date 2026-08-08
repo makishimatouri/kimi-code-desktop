@@ -34,6 +34,7 @@ import {
 } from "./session-groups";
 import {
   getSessionRuntimeIndicator,
+  sessionRuntimeIndicatorDotKind,
   sessionRuntimeIndicatorLabel,
 } from "./session-runtime-indicator";
 import {
@@ -159,13 +160,7 @@ function SessionItem({
             <span className="flex items-center gap-1.5 truncate text-[13px] font-medium text-foreground">
               {runtimeIndicator !== "hidden" && (
                 <StatusDot
-                  status={
-                    runtimeIndicator === "working"
-                      ? "running"
-                      : runtimeIndicator === "error"
-                        ? "error"
-                        : "ok"
-                  }
+                  status={sessionRuntimeIndicatorDotKind(runtimeIndicator)}
                   className="size-[5px]"
                   title={sessionRuntimeIndicatorLabel(runtimeIndicator)}
                 />

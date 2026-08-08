@@ -1,5 +1,6 @@
 import { Bot, Check, ChevronRight, X } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import type { LiveMessage, SubagentStep } from "@/hooks/types";
 import { parseAgentInput, parseAgentResult } from "@/lib/agent/parseAgentResult";
 import {
@@ -7,19 +8,21 @@ import {
   resolveAgentModelDisplay,
 } from "@/lib/agent-model-display";
 import {
+  type AgentTask,
   getSwarmMembers,
   isActiveAgentStatus,
   useAgentMonitorStore,
-  type AgentTask,
 } from "@/lib/agent-monitor/store";
 import {
+  isToolRunning,
+  PHASE_LABEL,
   phaseForAgentTask,
-  statusToDotKind,
+  phaseTextClass,
   type SwarmPhase,
 } from "@/lib/swarm/swarmCardRows";
 import { cn } from "@/lib/utils";
 import { Expandable } from "@/ui/expandable";
-import { StatusDot } from "@/ui/status-dot";
+import { StatusDot, statusToDotKind } from "@/ui/status-dot";
 import { Attachments } from "./attachments";
 import { SubagentSteps } from "./subagent-steps";
 import { TermView } from "./term-view";
@@ -48,14 +51,6 @@ const STATUS_LABEL: Record<string, string> = {
   waiting: "等待中",
 };
 
-const PHASE_LABEL: Record<SwarmPhase, string> = {
-  completed: "已完成",
-  working: "运行中",
-  suspended: "已暂停",
-  failed: "失败",
-  queued: "排队中",
-};
-
 type SubagentProgressRow = {
   id: string;
   name: string;
@@ -65,10 +60,6 @@ type SubagentProgressRow = {
   steps?: SubagentStep[];
   stepsRunning?: boolean;
 };
-
-function isToolRunning(state: ToolCall["state"]): boolean {
-  return state === "input-streaming" || state === "input-available";
-}
 
 /** Result/meta statuses that mean the agent is still in flight — never treat as done. */
 function isActiveResultStatus(status?: string): boolean {
@@ -116,21 +107,6 @@ function statusLabel(status?: string): string {
 
 function truncate(value: string, max = 80): string {
   return value.length > max ? `${value.slice(0, max)}…` : value;
-}
-
-function phaseTextClass(phase: SwarmPhase): string {
-  switch (phase) {
-    case "completed":
-      return "text-success";
-    case "failed":
-      return "text-danger";
-    case "working":
-      return "text-foreground";
-    case "suspended":
-      return "text-warn";
-    default:
-      return "text-faint";
-  }
 }
 
 function phaseFromCardState(args: {
@@ -326,10 +302,15 @@ export function AgentToolCard({
   const agentId = result.agentId ?? toolCall.subagentAgentId;
 
   // Parent Agent tool can reach output-available while the monitor task is still
-  // queued/running (spawn ack / in_progress update). Keep the card live then.
-  // Select the stable tasks array — never return a fresh filtered array from the
-  // store selector (that breaks getSnapshot and infinite-loops React).
-  const monitorTasks = useAgentMonitorStore((state) => state.tasks);
+  // queued/running (spawn ack / in_progress update). Keep the card live then,
+  // but do not rerender this card for unrelated agents elsewhere in history.
+  const monitorTasks = useAgentMonitorStore(
+    useShallow((state) =>
+      state.tasks.filter(
+        (task) => task.parentToolCallId === toolCall.toolCallId || task.id === agentId,
+      ),
+    ),
+  );
   const childTasks = useMemo(
     () => resolveChildTasks(monitorTasks, toolCall.toolCallId, agentId),
     [monitorTasks, toolCall.toolCallId, agentId],

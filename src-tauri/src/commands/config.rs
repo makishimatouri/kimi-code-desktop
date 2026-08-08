@@ -28,6 +28,7 @@ use crate::runtime::client::{
 };
 use crate::runtime::host::RuntimeHost;
 use crate::runtime::protocol::RuntimeInfo;
+use crate::runtime::runtime_error_message;
 use crate::runtime::supervisor::{RuntimeError, RuntimeSupervisor, ShutdownConfig};
 use crate::runtime_check;
 use crate::security::validate_mcp_config_json;
@@ -38,9 +39,15 @@ use crate::session_config::{
 };
 use serde_json::{json, Value};
 use std::fs;
-use std::path::PathBuf;
+use std::fs::{File, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tauri::Manager;
+
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 const DEFAULT_MCP_JSON: &str = "{\n  \"mcpServers\": {}\n}\n";
 
@@ -58,6 +65,7 @@ const REBUILD_SHUTDOWN: ShutdownConfig = ShutdownConfig {
     response_timeout: Duration::from_secs(5),
     exit_timeout: Duration::from_secs(5),
 };
+static CONFIG_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 fn kimi_config_path(file_name: &str) -> Result<PathBuf, String> {
     Ok(runtime_check::kimi_code_home_dir()?.join(file_name))
@@ -78,19 +86,275 @@ fn read_kimi_config_file(file_name: &str, default_content: &str) -> Result<Value
     }))
 }
 
-fn write_kimi_config_file(file_name: &str, content: &str) -> Result<Value, String> {
-    let path = kimi_config_path(file_name)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create {}: {}", parent.display(), e))?;
+#[derive(Clone, Debug)]
+enum PreviousConfigFile {
+    Missing,
+    Contents {
+        contents: Vec<u8>,
+        #[cfg(unix)]
+        mode: u32,
+    },
+}
+
+impl PreviousConfigFile {
+    #[cfg(unix)]
+    fn unix_mode(&self) -> u32 {
+        match self {
+            Self::Missing => 0o600,
+            Self::Contents { mode, .. } => *mode,
+        }
+    }
+}
+
+#[derive(Debug)]
+enum ConfigReplaceError {
+    BeforeReplace(String),
+    AfterReplace(String),
+}
+
+impl ConfigReplaceError {
+    fn message(self) -> String {
+        match self {
+            Self::BeforeReplace(message) | Self::AfterReplace(message) => message,
+        }
     }
 
-    fs::write(&path, content).map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
+    fn replaced_destination(&self) -> bool {
+        matches!(self, Self::AfterReplace(_))
+    }
+}
 
-    Ok(json!({
-        "success": true,
-        "error": Value::Null,
-    }))
+fn snapshot_config_file(path: &Path) -> Result<PreviousConfigFile, String> {
+    match fs::read(path) {
+        Ok(contents) => {
+            #[cfg(unix)]
+            let mode = fs::metadata(path)
+                .map_err(|error| {
+                    format!("Failed to read permissions for {}: {error}", path.display())
+                })?
+                .permissions()
+                .mode()
+                & 0o777;
+            Ok(PreviousConfigFile::Contents {
+                contents,
+                #[cfg(unix)]
+                mode,
+            })
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(PreviousConfigFile::Missing)
+        }
+        Err(error) => Err(format!(
+            "Failed to read {} before saving: {error}",
+            path.display()
+        )),
+    }
+}
+
+fn temp_config_path(path: &Path) -> Result<PathBuf, String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("Config path has no parent: {}", path.display()))?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("Config path has no file name: {}", path.display()))?;
+    Ok(parent.join(format!(
+        ".{file_name}.desktop-save-{}-{}",
+        std::process::id(),
+        CONFIG_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed),
+    )))
+}
+
+fn sync_parent_directory(path: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        let parent = path
+            .parent()
+            .ok_or_else(|| format!("Config path has no parent: {}", path.display()))?;
+        File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| {
+                format!(
+                    "Failed to sync config directory {}: {error}",
+                    parent.display()
+                )
+            })?;
+    }
+    Ok(())
+}
+
+/// Write a complete configuration file through a same-directory temporary file.
+/// The temporary file is flushed before replacement so a power loss cannot leave
+/// a partially-written destination. On platforms where rename cannot replace an
+/// existing file directly, move the old file aside and restore it if the second
+/// rename fails.
+fn replace_config_file(
+    path: &Path,
+    contents: &[u8],
+    #[cfg(unix)] mode: u32,
+) -> Result<(), ConfigReplaceError> {
+    let parent = path.parent().ok_or_else(|| {
+        ConfigReplaceError::BeforeReplace(format!("Config path has no parent: {}", path.display()))
+    })?;
+    fs::create_dir_all(parent).map_err(|error| {
+        ConfigReplaceError::BeforeReplace(format!("Failed to create {}: {error}", parent.display()))
+    })?;
+
+    let temp = temp_config_path(path).map_err(ConfigReplaceError::BeforeReplace)?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(mode);
+    let mut temp_file = options.open(&temp).map_err(|error| {
+        ConfigReplaceError::BeforeReplace(format!(
+            "Failed to create temporary config file {}: {error}",
+            temp.display()
+        ))
+    })?;
+    if let Err(error) = temp_file
+        .write_all(contents)
+        .and_then(|_| temp_file.sync_all())
+    {
+        let _ = fs::remove_file(&temp);
+        return Err(ConfigReplaceError::BeforeReplace(format!(
+            "Failed to flush temporary config file {}: {error}",
+            temp.display()
+        )));
+    }
+    drop(temp_file);
+
+    let replace_error = match fs::rename(&temp, path) {
+        Ok(()) => {
+            return sync_parent_directory(path).map_err(ConfigReplaceError::AfterReplace);
+        }
+        Err(error) => error,
+    };
+
+    // Windows does not allow rename-overwrite. Keep a same-directory recovery
+    // file for that branch only; Unix normally completed above atomically.
+    if !path.exists() {
+        let _ = fs::remove_file(&temp);
+        return Err(ConfigReplaceError::BeforeReplace(format!(
+            "Failed to replace {}: {replace_error}",
+            path.display()
+        )));
+    }
+    let backup = parent.join(format!(
+        ".{}.desktop-backup-{}-{}",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("config"),
+        std::process::id(),
+        CONFIG_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed),
+    ));
+    fs::rename(path, &backup).map_err(|error| {
+        let _ = fs::remove_file(&temp);
+        ConfigReplaceError::BeforeReplace(format!(
+            "Failed to prepare replacement for {}: {error}",
+            path.display()
+        ))
+    })?;
+    if let Err(error) = fs::rename(&temp, path) {
+        let restore = fs::rename(&backup, path);
+        let _ = fs::remove_file(&temp);
+        return Err(match restore {
+            Ok(()) => ConfigReplaceError::BeforeReplace(format!(
+                "Failed to replace {}: {error}; previous file was restored",
+                path.display()
+            )),
+            Err(restore_error) => ConfigReplaceError::BeforeReplace(format!(
+                "Failed to replace {}: {error}; failed to restore backup {}: {restore_error}",
+                path.display(),
+                backup.display()
+            )),
+        });
+    }
+    fs::remove_file(&backup).map_err(|error| {
+        ConfigReplaceError::AfterReplace(format!(
+            "Replaced {} but failed to remove backup {}: {error}",
+            path.display(),
+            backup.display()
+        ))
+    })?;
+    sync_parent_directory(path).map_err(ConfigReplaceError::AfterReplace)
+}
+
+fn restore_config_file(path: &Path, previous: &PreviousConfigFile) -> Result<(), String> {
+    match previous {
+        PreviousConfigFile::Contents {
+            contents,
+            #[cfg(unix)]
+            mode,
+        } => replace_config_file(
+            path,
+            contents,
+            #[cfg(unix)]
+            *mode,
+        )
+        .map_err(ConfigReplaceError::message),
+        PreviousConfigFile::Missing => match fs::remove_file(path) {
+            Ok(()) => sync_parent_directory(path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(format!(
+                "Failed to remove newly-created {}: {error}",
+                path.display()
+            )),
+        },
+    }
+}
+
+fn apply_text_config_transaction<T>(
+    path: &Path,
+    content: &str,
+    apply_runtime: impl FnOnce() -> Result<T, String>,
+    recover_runtime: impl FnOnce() -> Result<(), String>,
+) -> Result<T, String> {
+    let previous = snapshot_config_file(path)?;
+    if let Err(replace_error) = replace_config_file(
+        path,
+        content.as_bytes(),
+        #[cfg(unix)]
+        previous.unix_mode(),
+    ) {
+        if !replace_error.replaced_destination() {
+            return Err(replace_error.message());
+        }
+        let replace_message = replace_error.message();
+        return match restore_config_file(path, &previous) {
+            Ok(()) => Err(format!(
+                "Configuration save could not be durably synced and was restored: {replace_message}. Please retry the save."
+            )),
+            Err(rollback_error) => Err(format!(
+                "Configuration save could not be durably synced: {replace_message}. Automatic rollback of {} also failed: {rollback_error}",
+                path.display()
+            )),
+        };
+    }
+
+    match apply_runtime() {
+        Ok(result) => Ok(result),
+        Err(apply_error) => {
+            let rollback = restore_config_file(path, &previous);
+            let recovery = if rollback.is_ok() {
+                recover_runtime()
+            } else {
+                Ok(())
+            };
+            match (rollback, recovery) {
+                (Ok(()), Ok(())) => Err(format!(
+                    "Configuration was restored after Runtime reload failed: {apply_error}. Please retry the save or inspect the Runtime error."
+                )),
+                (Ok(()), Err(recovery_error)) => Err(format!(
+                    "Configuration was restored after Runtime reload failed: {apply_error}. The previous Runtime could not be recovered automatically: {recovery_error}"
+                )),
+                (Err(rollback_error), _) => Err(format!(
+                    "Runtime reload failed: {apply_error}. Automatic rollback of {} also failed: {rollback_error}",
+                    path.display()
+                )),
+            }
+        }
+    }
 }
 
 fn validate_toml(content: &str) -> Result<(), String> {
@@ -243,8 +507,9 @@ pub async fn update_global_config(
 // Raw file writes (whole-file write + supervisor rebuild)
 // ---------------------------------------------------------------------------
 
-/// Sessions to report as restarted, plus busy-session skips (always empty on
-/// the M4 rebuild path — every open session restarts).
+/// Sessions to report as restarted. Busy sessions reject the transaction
+/// before the file write, so a successful rebuild always restarts every open
+/// session and the compatibility `skipped` field stays empty.
 struct RestartSummary {
     restarted: Vec<String>,
     skipped: Vec<String>,
@@ -260,38 +525,77 @@ struct RestartSummary {
 /// The supervisor's state lands on `Stopped` after the drain, which is
 /// exactly the state `ensure_started` rebuilds from; the event pump self-exits
 /// on `Stopped` (see `runtime/host/event_pump.rs`).
-fn rebuild_runtime_after_config(app: &tauri::AppHandle) -> Result<RestartSummary, String> {
-    let host = app.state::<RuntimeHost>();
-    host.install_app(app);
-    let open_ids: Vec<String> = host
-        .list_workers()
+fn open_session_ids(host: &RuntimeHost) -> Vec<String> {
+    host.list_workers()
         .into_iter()
         .map(|worker| worker.session_id)
-        .collect();
-    let supervisor = host.ensure_started()?;
-    supervisor
-        .shutdown(&REBUILD_SHUTDOWN)
-        .map_err(|err| format!("runtime shutdown before config reload failed: {err}"))?;
-    let restarted = host.ensure_started()?;
-    reopen_sessions(&restarted, &open_ids);
+        .collect()
+}
+
+fn rebuild_runtime_after_config(
+    host: &RuntimeHost,
+    open_ids: &[String],
+) -> Result<RestartSummary, String> {
+    let restarted = host.reload_runtime(&REBUILD_SHUTDOWN)?;
+    reopen_sessions(&restarted, open_ids)?;
     Ok(RestartSummary {
-        restarted: open_ids,
+        restarted: open_ids.to_vec(),
         skipped: Vec::new(),
     })
 }
 
-/// Best-effort eager `session.open` on the rebuilt generation. A failure is
-/// logged, not fatal: the frontend reconnect path (`connect_leased`) re-opens
-/// sessions lazily on its next use regardless.
-fn reopen_sessions(supervisor: &RuntimeSupervisor, session_ids: &[String]) {
+/// Eagerly re-open every previously-open session. Re-open failures make the
+/// configuration transaction fail so its prior on-disk configuration can be
+/// restored before the caller reports success.
+fn reopen_sessions(supervisor: &RuntimeSupervisor, session_ids: &[String]) -> Result<(), String> {
     let client = RuntimeClient::new(supervisor);
+    let mut failures = Vec::new();
     for session_id in session_ids {
         if let Err(err) = client.session_open(session_id, CONFIG_CALL_TIMEOUT) {
-            eprintln!(
-                "[config] failed to re-open session `{session_id}` after config reload: {err}"
-            );
+            failures.push(format!("{session_id}: {err}"));
         }
     }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "failed to re-open session(s): {}",
+            failures.join("; ")
+        ))
+    }
+}
+
+fn recover_runtime_after_config_rollback(
+    host: &RuntimeHost,
+    open_ids: &[String],
+) -> Result<(), String> {
+    // The failed apply may already have started a new generation that loaded
+    // the bad file and only then failed while re-opening sessions. Always
+    // drain the current generation after the file rollback before booting the
+    // restored configuration.
+    let supervisor = host
+        .reload_runtime(&REBUILD_SHUTDOWN)
+        .map_err(|err| format!("runtime rollback recovery failed: {err}"))?;
+    reopen_sessions(&supervisor, open_ids)
+}
+
+fn update_text_config_file(
+    app: &tauri::AppHandle,
+    file_name: &str,
+    content: &str,
+) -> Result<RestartSummary, String> {
+    let path = kimi_config_path(file_name)?;
+    let host = app.state::<RuntimeHost>();
+    host.install_app(app);
+    host.run_when_turns_idle(|| {
+        let open_ids = open_session_ids(&host);
+        apply_text_config_transaction(
+            &path,
+            content,
+            || rebuild_runtime_after_config(&host, &open_ids),
+            || recover_runtime_after_config_rollback(&host, &open_ids),
+        )
+    })
 }
 
 fn restarted_field(ids: &[String]) -> Value {
@@ -305,10 +609,11 @@ fn restarted_field(ids: &[String]) -> Value {
 #[tauri::command]
 pub async fn update_config_toml(app: tauri::AppHandle, content: String) -> Result<Value, String> {
     validate_toml(&content)?;
-    write_kimi_config_file("config.toml", &content)?;
-    let summary = tauri::async_runtime::spawn_blocking(move || rebuild_runtime_after_config(&app))
-        .await
-        .map_err(|e| format!("Failed to join config reload task: {e}"))??;
+    let summary = tauri::async_runtime::spawn_blocking(move || {
+        update_text_config_file(&app, "config.toml", &content)
+    })
+    .await
+    .map_err(|e| format!("Failed to join config reload task: {e}"))??;
     Ok(json!({
         "success": true,
         "error": Value::Null,
@@ -320,10 +625,11 @@ pub async fn update_config_toml(app: tauri::AppHandle, content: String) -> Resul
 #[tauri::command]
 pub async fn update_mcp_config(app: tauri::AppHandle, content: String) -> Result<Value, String> {
     validate_mcp_config(&content)?;
-    write_kimi_config_file("mcp.json", &content)?;
-    let summary = tauri::async_runtime::spawn_blocking(move || rebuild_runtime_after_config(&app))
-        .await
-        .map_err(|e| format!("Failed to join config reload task: {e}"))??;
+    let summary = tauri::async_runtime::spawn_blocking(move || {
+        update_text_config_file(&app, "mcp.json", &content)
+    })
+    .await
+    .map_err(|e| format!("Failed to join config reload task: {e}"))??;
     Ok(json!({
         "success": true,
         "error": Value::Null,
@@ -674,29 +980,14 @@ pub async fn check_runtime_readiness() -> Result<runtime_check::RuntimeReadiness
         .map_err(|e| format!("Failed to join runtime readiness check: {e}"))
 }
 
-// ---------------------------------------------------------------------------
-// Command-level error mapping (mirrors commands/auth.rs)
-// ---------------------------------------------------------------------------
-
-/// A runtime `Rejected` (well-formed `ok: false`) surfaces its code and
-/// message, which the frontend tolerates as a displayable error; fatal
-/// failures (protocol, io, timeout, unexpected exit) surface as an operation
-/// failure.
-fn runtime_error_message(operation: &str, err: RuntimeError) -> String {
-    match err {
-        RuntimeError::Rejected(body) => {
-            format!("{operation} rejected: {}: {}", body.code, body.message)
-        }
-        other => format!("{operation} failed: {other}"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::runtime::protocol::{KimiSourceInfo, RuntimeCapabilities};
     use crate::runtime::supervisor::RuntimeError;
     use crate::session_config::SessionConfigStatus;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     fn runtime_info() -> RuntimeInfo {
         RuntimeInfo {
@@ -845,6 +1136,128 @@ mod tests {
             "openai"
         );
         assert!(validate_required(&"x".repeat(2049), "Provider ID").is_err());
+    }
+
+    #[test]
+    fn text_config_transaction_restores_existing_file_and_recovers_runtime() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "default_model = \"old\"\n").expect("seed config");
+        let mut recovered = false;
+
+        let error = apply_text_config_transaction(
+            &path,
+            "default_model = \"new\"\n",
+            || Err::<(), _>("new runtime rejected config".to_string()),
+            || {
+                recovered = true;
+                Ok(())
+            },
+        )
+        .expect_err("rebuild should fail");
+
+        assert!(recovered);
+        assert!(error.contains("Configuration was restored"));
+        assert_eq!(
+            fs::read_to_string(&path).expect("restored config"),
+            "default_model = \"old\"\n"
+        );
+    }
+
+    #[test]
+    fn text_config_transaction_removes_new_file_when_rebuild_fails() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let path = dir.path().join("mcp.json");
+        let mut recovered = false;
+
+        let error = apply_text_config_transaction(
+            &path,
+            "{\"mcpServers\":{}}\n",
+            || Err::<(), _>("new runtime rejected config".to_string()),
+            || {
+                recovered = true;
+                Ok(())
+            },
+        )
+        .expect_err("rebuild should fail");
+
+        assert!(recovered);
+        assert!(error.contains("Configuration was restored"));
+        assert!(
+            !path.exists(),
+            "failed initial save must not leave a new file"
+        );
+    }
+
+    #[test]
+    fn text_config_transaction_keeps_replaced_file_after_successful_rebuild() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "default_model = \"old\"\n").expect("seed config");
+
+        let result = apply_text_config_transaction(
+            &path,
+            "default_model = \"new\"\n",
+            || Ok::<_, String>("restarted"),
+            || panic!("recovery must not run after a successful rebuild"),
+        )
+        .expect("rebuild succeeds");
+
+        assert_eq!(result, "restarted");
+        assert_eq!(
+            fs::read_to_string(&path).expect("saved config"),
+            "default_model = \"new\"\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn text_config_transaction_preserves_existing_owner_only_permissions() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "default_model = \"old\"\n").expect("seed config");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("lock down config");
+
+        apply_text_config_transaction(
+            &path,
+            "default_model = \"new\"\n",
+            || Ok::<_, String>(()),
+            || panic!("recovery must not run after a successful rebuild"),
+        )
+        .expect("rebuild succeeds");
+
+        assert_eq!(
+            fs::metadata(&path)
+                .expect("config metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn text_config_transaction_creates_new_files_owner_only() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let path = dir.path().join("mcp.json");
+
+        apply_text_config_transaction(
+            &path,
+            "{\"mcpServers\":{}}\n",
+            || Ok::<_, String>(()),
+            || panic!("recovery must not run after a successful rebuild"),
+        )
+        .expect("rebuild succeeds");
+
+        assert_eq!(
+            fs::metadata(&path)
+                .expect("config metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
     }
 
     #[test]

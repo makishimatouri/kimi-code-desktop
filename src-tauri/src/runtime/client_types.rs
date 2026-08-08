@@ -171,6 +171,12 @@ pub struct TurnStartParams {
     /// Desktop-minted turn id; echoed by turn.completed/turn.failed.
     pub request_id: String,
     pub input: PromptInput,
+    /// Desktop-only presentation input. Compatibility instructions may be
+    /// model-visible in `input`, but they must never be synthesized as user
+    /// content in the live wire stream. This field is intentionally excluded
+    /// from runtime-v1 serialization.
+    #[serde(skip)]
+    pub visible_input: Option<PromptInput>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -181,8 +187,9 @@ pub struct TurnStartParams {
 #[serde(rename_all = "camelCase")]
 pub struct TurnStartResult {
     pub request_id: String,
-    /// Engine turn id; `z.number()` accepts integers and floats.
-    pub turn_id: f64,
+    /// Engine turn id, or `None` when a runtime-local slash command completed
+    /// without launching an engine turn.
+    pub turn_id: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]

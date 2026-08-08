@@ -251,7 +251,7 @@ describe("MessageList semantic rendering", () => {
         title: "Bash",
         type: "tool-Bash" as never,
         state: "approval-requested",
-        approval: { id: "r1", action: "Bash", description: "npm test", sender: "kimi" },
+        approval: { id: "r1", action: "Bash", description: "npm test", sender: "kimi", toolCallId: "tc-r1" },
       },
     } as LiveMessage;
     render(
@@ -495,6 +495,7 @@ describe("MessageList long-session windowing (issue #13)", () => {
           action: "Bash",
           description: "Run old pending command",
           sender: "Kimi",
+          toolCallId: "approval-old",
           submitted: false,
           resolved: false,
         },

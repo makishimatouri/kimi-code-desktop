@@ -25,9 +25,18 @@ const RUNTIME_ENTRY_ENV: &str = "KIMI_RUNTIME_ENTRY";
 /// `src-tauri/binaries/desktop-runtime-<target-triple>`.
 const RUNTIME_SIDECAR: &str = "desktop-runtime";
 
+/// Product-level liveness defaults. They are injected only when the user has
+/// not supplied the corresponding environment/config value.
+const SWARM_MAX_CONCURRENCY_ENV: &str = "KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY";
+const SUBAGENT_TIMEOUT_ENV: &str = "KIMI_SUBAGENT_TIMEOUT_MS";
+const DEFAULT_SWARM_MAX_CONCURRENCY: &str = "4";
+const DEFAULT_SUBAGENT_TIMEOUT_MS: &str = "600000";
+
 /// Spawn inputs for the next runtime child plus the resolved entry path
 /// (kept apart so `readiness::check_artifact` can gate the file first).
-pub(super) struct ResolvedSpawn {
+/// Crate-visible so the readiness probe resolves the same spawn (including
+/// the release SEA sidecar branch) as the managed host.
+pub(crate) struct ResolvedSpawn {
     pub entry: PathBuf,
     pub config: SpawnConfig,
 }
@@ -62,7 +71,7 @@ fn node_spawn(entry: &std::path::Path) -> ResolvedSpawn {
         config: SpawnConfig {
             program: "node".to_string(),
             args: vec![entry.to_string_lossy().into_owned()],
-            env: Vec::new(),
+            env: desktop_runtime_env(),
             cwd: None,
         },
     }
@@ -75,13 +84,38 @@ fn sidecar_spawn(sidecar: &std::path::Path) -> ResolvedSpawn {
         config: SpawnConfig {
             program: sidecar.to_string_lossy().into_owned(),
             args: Vec::new(),
-            env: Vec::new(),
+            env: desktop_runtime_env(),
             cwd: None,
         },
     }
 }
 
-pub(super) fn resolve_spawn_config() -> ResolvedSpawn {
+fn desktop_runtime_env() -> Vec<(String, String)> {
+    let mut env = Vec::new();
+    if std::env::var_os(SWARM_MAX_CONCURRENCY_ENV).is_none() {
+        env.push((
+            SWARM_MAX_CONCURRENCY_ENV.to_string(),
+            DEFAULT_SWARM_MAX_CONCURRENCY.to_string(),
+        ));
+    }
+    if std::env::var_os(SUBAGENT_TIMEOUT_ENV).is_none()
+        && matches!(
+            crate::global_config::has_configured_subagent_timeout(),
+            Ok(false)
+        )
+    {
+        env.push((
+            SUBAGENT_TIMEOUT_ENV.to_string(),
+            DEFAULT_SUBAGENT_TIMEOUT_MS.to_string(),
+        ));
+    }
+    env
+}
+
+/// Resolve the spawn inputs for the next runtime child. Shared with the
+/// readiness probe (`runtime_check.rs`) so a release build probes the same
+/// SEA sidecar the managed host spawns.
+pub(crate) fn resolve_spawn_config() -> ResolvedSpawn {
     // Highest priority: env override (tests / fixture injection). It always
     // spawns `node <entry>`, even in release builds.
     if let Some(entry) = std::env::var(RUNTIME_ENTRY_ENV)
@@ -209,7 +243,34 @@ mod tests {
         assert_eq!(resolved.config.program, sidecar.to_string_lossy());
         assert_ne!(resolved.config.program, "node");
         assert!(resolved.config.args.is_empty(), "SEA sidecar takes no args");
-        assert!(resolved.config.env.is_empty());
+    }
+
+    #[test]
+    fn desktop_runtime_env_bounds_swarm_without_overriding_explicit_env() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let saved = std::env::var(SWARM_MAX_CONCURRENCY_ENV).ok();
+
+        std::env::remove_var(SWARM_MAX_CONCURRENCY_ENV);
+        let defaults = desktop_runtime_env();
+        assert!(defaults.iter().any(|(key, value)| {
+            key == SWARM_MAX_CONCURRENCY_ENV && value == DEFAULT_SWARM_MAX_CONCURRENCY
+        }));
+
+        std::env::set_var(SWARM_MAX_CONCURRENCY_ENV, "2");
+        let explicit = desktop_runtime_env();
+        assert!(
+            explicit
+                .iter()
+                .all(|(key, _)| key != SWARM_MAX_CONCURRENCY_ENV),
+            "an inherited user override must win"
+        );
+
+        match saved {
+            Some(value) => std::env::set_var(SWARM_MAX_CONCURRENCY_ENV, value),
+            None => std::env::remove_var(SWARM_MAX_CONCURRENCY_ENV),
+        }
     }
 
     #[test]

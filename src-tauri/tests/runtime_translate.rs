@@ -260,6 +260,10 @@ fn subagent_tool_calls_wrap_as_subagent_event_with_stable_provenance() {
             "parentToolCallId": "agent-call-1",
             "subagentType": "reviewer",
             "description": "Review it",
+            "parentAgentId": "main",
+            "swarmIndex": 0,
+            "swarmDepth": 0,
+            "runInBackground": false,
         }),
     ));
     assert_eq!(event_type(&spawned[0]), "TaskCreated");
@@ -385,7 +389,8 @@ fn question_requested_maps_to_wire_request_with_defaults() {
     assert_eq!(message["params"]["type"], json!("QuestionRequest"));
     let payload = &message["params"]["payload"];
     assert_eq!(payload["id"], json!("q-1"));
-    assert_eq!(payload["tool_call_id"], json!(""));
+    // Missing toolCallId maps to null (no longer the empty string).
+    assert_eq!(payload["tool_call_id"], json!(null));
     let questions = payload["questions"].as_array().expect("questions array");
     assert_eq!(questions.len(), 2);
     assert_eq!(
@@ -498,6 +503,10 @@ fn subagent_updated_lifecycle_with_stable_provenance() {
             "parentToolCallId": "agent-call-1",
             "subagentType": "reviewer",
             "description": "Review it",
+            "parentAgentId": "main",
+            "swarmIndex": 0,
+            "swarmDepth": 0,
+            "runInBackground": false,
         }),
     ));
     assert_eq!(spawned.len(), 2);
@@ -507,6 +516,10 @@ fn subagent_updated_lifecycle_with_stable_provenance() {
     assert_eq!(task["status"], json!("queued"));
     assert_eq!(task["subagent_phase"], json!("queued"));
     assert_eq!(task["parent_tool_call_id"], json!("agent-call-1"));
+    assert_eq!(task["parent_agent_id"], json!("main"));
+    assert_eq!(task["swarm_index"], json!(0));
+    assert_eq!(task["swarm_depth"], json!(0));
+    assert_eq!(task["run_in_background"], json!(false));
     let lifecycle = event_payload(&spawned[1]);
     assert_eq!(event_type(&spawned[1]), "SubagentLifecycle");
     assert_eq!(lifecycle["phase"], json!("queued"));
@@ -527,6 +540,10 @@ fn subagent_updated_lifecycle_with_stable_provenance() {
         json!("agent-call-1")
     );
     assert_eq!(started_payload["subagent_type"], json!("reviewer"));
+    assert_eq!(started_payload["parent_agent_id"], json!("main"));
+    assert_eq!(started_payload["swarm_index"], json!(0));
+    assert_eq!(started_payload["swarm_depth"], json!(0));
+    assert_eq!(started_payload["run_in_background"], json!(false));
 
     let completed = translator.translate(&session_frame(
         "subagent.updated",
@@ -1131,16 +1148,32 @@ fn session_config_with_options_array_maps_the_full_option_set() {
     );
 }
 
-/// Unknown event names still degrade to the generic notice (checklist §3);
-/// only the ten mapped parity events left this path in wave 2.
+#[test]
+fn goal_updated_refreshes_the_canonical_journal_snapshot() {
+    let messages = translate_event(&session_frame(
+        "goal.updated",
+        json!({
+            "snapshot": {
+                "goalId": "goal-1",
+                "objective": "Ship Goal events",
+                "status": "active",
+                "turnsUsed": 1,
+                "tokensUsed": 50,
+                "wallClockMs": 1000,
+                "budget": { "overBudget": false },
+            },
+            "change": { "kind": "lifecycle", "status": "active" },
+        }),
+    ));
+    assert_eq!(messages.len(), 1);
+    assert_eq!(event_type(&messages[0]), "StatusUpdate");
+    assert_eq!(event_payload(&messages[0]), json!({ "goal_refresh": true }));
+}
+
+/// Unknown event names still degrade to the generic notice (checklist §3).
 #[test]
 fn unmapped_events_still_fall_back_to_a_generic_notice() {
-    for event in [
-        "goal.updated",
-        "shell.started",
-        "context.low",
-        "turn.stepped",
-    ] {
+    for event in ["shell.started", "context.low", "turn.stepped"] {
         let messages = translate_event(&session_frame(event, json!({})));
         assert_eq!(messages.len(), 1, "{event} must not be dropped");
         assert_eq!(

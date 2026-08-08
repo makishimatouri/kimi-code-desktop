@@ -16,7 +16,7 @@ use app_lib::runtime::client::{
     ApprovalDecision, ApprovalRespondParams, QuestionRespondParams, QuestionResult, RuntimeClient,
 };
 use app_lib::runtime::host::{RuntimeHost, WireSink, EXPECTED_KIMI_COMMIT};
-use app_lib::runtime::supervisor::SupervisorState;
+use app_lib::runtime::supervisor::{ShutdownConfig, SupervisorState};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -173,6 +173,30 @@ fn ensure_started_handshakes_caches_info_and_shutdown_drains() {
     assert!(host.runtime_info().is_none());
     let err = host.ensure_started().err().expect("ensure_started fails");
     assert!(err.contains("shutting down"), "{err}");
+}
+
+#[test]
+fn coordinated_reload_replaces_the_runtime_generation() {
+    if !node_or_skip("runtime_host coordinated reload") {
+        return;
+    }
+    let entry = fixture_entry();
+    let _env = EnvGuard::set(&[("KIMI_RUNTIME_ENTRY", &entry)]);
+    let host = RuntimeHost::with_sink(Arc::new(CaptureSink::default()));
+    let original = host.ensure_started().expect("start original generation");
+    let shutdown = ShutdownConfig {
+        response_timeout: Duration::from_secs(5),
+        exit_timeout: Duration::from_secs(5),
+    };
+
+    let rebuilt = host
+        .run_when_turns_idle(|| host.reload_runtime(&shutdown))
+        .expect("coordinated reload");
+
+    assert_eq!(original.state(), SupervisorState::Stopped);
+    assert_eq!(rebuilt.state(), SupervisorState::Ready);
+    assert!(!Arc::ptr_eq(&original, &rebuilt));
+    host.shutdown();
 }
 
 #[test]

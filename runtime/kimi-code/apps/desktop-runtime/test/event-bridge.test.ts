@@ -20,7 +20,14 @@ const MAIN: EventTranslateContext = { agentId: 'main', isMainAgent: true, reques
 const SUBAGENT: EventTranslateContext = {
   agentId: 'agent-7',
   isMainAgent: false,
-  provenance: { parentToolCallId: 'tc-parent', subagentType: 'explore' },
+  provenance: {
+    parentToolCallId: 'tc-parent',
+    subagentType: 'explore',
+    parentAgentId: 'main',
+    swarmIndex: 1,
+    swarmDepth: 0,
+    runInBackground: false,
+  },
 };
 
 /** The exact JSON shape the wire carries (undefined fields dropped). */
@@ -123,7 +130,9 @@ describe('translateDomainEvent', () => {
         subagentId: 'agent-7',
         subagentName: 'explore',
         parentToolCallId: 'tc-parent',
+        parentAgentId: 'main',
         description: 'look around',
+        swarmIndex: 2,
         runInBackground: false,
       },
       MAIN,
@@ -134,6 +143,10 @@ describe('translateDomainEvent', () => {
       parentToolCallId: 'tc-parent',
       subagentType: 'explore',
       description: 'look around',
+      parentAgentId: 'main',
+      swarmIndex: 1,
+      swarmDepth: 0,
+      runInBackground: false,
     });
 
     // The engine emits an empty parentToolCallId when there is none.
@@ -158,6 +171,10 @@ describe('translateDomainEvent', () => {
       agentId: 'agent-7',
       parentToolCallId: 'tc-parent',
       subagentType: 'explore',
+      parentAgentId: 'main',
+      swarmIndex: 1,
+      swarmDepth: 0,
+      runInBackground: false,
       resultSummary: 'done',
     });
 
@@ -195,6 +212,54 @@ describe('translateDomainEvent', () => {
       MAIN,
     );
     expect(wire(terminated?.payload)).toMatchObject({ taskId: 'task-1', status: 'completed' });
+  });
+
+  it('maps the main-agent Goal snapshot/change and drops subagent Goal state', () => {
+    const event: DomainEvent<'goal.updated'> = {
+      type: 'goal.updated',
+      snapshot: {
+        goalId: 'goal-1',
+        objective: 'Ship the Goal event bridge',
+        completionCriterion: 'Live and replay tests pass',
+        status: 'paused',
+        turnsUsed: 2,
+        tokensUsed: 120,
+        wallClockMs: 5000,
+        budget: {
+          tokenBudget: 200,
+          turnBudget: 5,
+          wallClockBudgetMs: 10000,
+          remainingTokens: 80,
+          remainingTurns: 3,
+          remainingWallClockMs: 5000,
+          tokenBudgetReached: false,
+          turnBudgetReached: false,
+          wallClockBudgetReached: false,
+          overBudget: false,
+        },
+        terminalReason: 'Paused by user',
+      },
+      change: {
+        kind: 'lifecycle',
+        status: 'paused',
+        reason: 'Paused by user',
+        actor: 'user',
+      },
+    };
+
+    const translated = translateDomainEvent(event, MAIN);
+    expect(translated?.event).toBe('goal.updated');
+    expect(wire(translated?.payload)).toEqual({
+      snapshot: event.snapshot,
+      change: event.change,
+    });
+    expect(translateDomainEvent(event, SUBAGENT)).toBeNull();
+
+    const cleared = translateDomainEvent(
+      { type: 'goal.updated', snapshot: null },
+      MAIN,
+    );
+    expect(wire(cleared?.payload)).toEqual({ snapshot: null });
   });
 
   it('drops engine events with no runtime-v1 counterpart', () => {

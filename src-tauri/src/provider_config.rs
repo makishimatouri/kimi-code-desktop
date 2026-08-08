@@ -2,12 +2,12 @@
 //!
 //! Never returns api keys, tokens, or other credential material.
 
+use crate::global_config;
+use crate::runtime::now_ms;
 use crate::runtime_check;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 const SECRET_FIELD_NAMES: &[&str] = &[
     "api_key",
@@ -30,13 +30,6 @@ static RUNTIME_AUTH_STATE: Mutex<RuntimeAuthState> = Mutex::new(RuntimeAuthState
     last_failure_at_ms: None,
     last_failure_message: None,
 });
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
-}
 
 fn sanitize_auth_message(message: &str) -> String {
     let mut sanitized = message.trim().to_string();
@@ -96,7 +89,7 @@ fn runtime_auth_snapshot() -> Value {
 pub fn get_providers_overview() -> Result<Value, String> {
     let path = runtime_check::kimi_code_config_path()?;
     let path_string = path.to_string_lossy().to_string();
-    let parsed = load_config_toml(&path)?;
+    let parsed = global_config::load_config_toml_at(&path)?;
     let default_model = parsed
         .get("default_model")
         .and_then(toml::Value::as_str)
@@ -242,17 +235,6 @@ pub fn get_providers_overview() -> Result<Value, String> {
         "kimiAccountCredentialsPresent": runtime_check::credentials_present(),
         "runtimeAuth": runtime_auth_snapshot(),
     }))
-}
-
-fn load_config_toml(path: &std::path::Path) -> Result<toml::Value, String> {
-    if !path.exists() {
-        return Ok(toml::Value::Table(toml::map::Map::new()));
-    }
-    let content = fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
-    content
-        .parse::<toml::Value>()
-        .map_err(|e| format!("Invalid Kimi config TOML: {e}"))
 }
 
 fn build_provider_summary(

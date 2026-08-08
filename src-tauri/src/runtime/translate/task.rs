@@ -4,7 +4,7 @@
 //! budget. Both mappings are stateful by design: a task is announced via
 //! `TaskCreated` exactly once per session, and subagent provenance learned at
 //! `spawned` backfills later lifecycle events so the parent link stays
-//! stable. Output shapes mirror `the pre-cutover ACP translation module` (the UI contract).
+//! stable. Output shapes mirror the ACP-era `acp_translate.rs` (the UI contract).
 
 use super::{
     cloned_for_keys, malformed_event_notice, string_for_keys, value_for_keys, wire_event_message,
@@ -181,13 +181,28 @@ pub(super) fn translate_subagent_updated(
         string_for_keys(payload, &["parentToolCallId", "parent_tool_call_id"])
             .or_else(|| learned.as_ref().and_then(|p| p.parent_tool_call_id.clone()));
     let subagent_type = string_for_keys(payload, &["subagentType", "subagent_type"])
-        .or_else(|| learned.and_then(|p| p.subagent_type));
+        .or_else(|| learned.as_ref().and_then(|p| p.subagent_type.clone()));
+    let parent_agent_id = string_for_keys(payload, &["parentAgentId", "parent_agent_id"])
+        .or_else(|| learned.as_ref().and_then(|p| p.parent_agent_id.clone()));
+    let swarm_index = value_for_keys(payload, &["swarmIndex", "swarm_index"])
+        .cloned()
+        .or_else(|| learned.as_ref().and_then(|p| p.swarm_index.clone()));
+    let swarm_depth = value_for_keys(payload, &["swarmDepth", "swarm_depth"])
+        .cloned()
+        .or_else(|| learned.as_ref().and_then(|p| p.swarm_depth.clone()));
+    let run_in_background = value_for_keys(payload, &["runInBackground", "run_in_background"])
+        .cloned()
+        .or_else(|| learned.as_ref().and_then(|p| p.run_in_background.clone()));
     if raw_phase == "spawned" {
         state.subagent_provenance.insert(
             agent_id.clone(),
             SubagentProvenance {
                 parent_tool_call_id: parent_tool_call_id.clone(),
                 subagent_type: subagent_type.clone(),
+                parent_agent_id: parent_agent_id.clone(),
+                swarm_index: swarm_index.clone(),
+                swarm_depth: swarm_depth.clone(),
+                run_in_background: run_in_background.clone(),
             },
         );
     }
@@ -208,9 +223,10 @@ pub(super) fn translate_subagent_updated(
             "subagent_type": subagent_type,
             "phase": phase,
             "description": description,
-            "swarm_index": cloned_for_keys(payload, &["swarm_index", "swarmIndex"]),
-            "parent_agent_id": cloned_for_keys(payload, &["parent_agent_id", "parentAgentId"]),
-            "swarm_depth": cloned_for_keys(payload, &["swarm_depth", "swarmDepth"]),
+            "swarm_index": swarm_index.clone().unwrap_or(Value::Null),
+            "parent_agent_id": parent_agent_id.clone(),
+            "swarm_depth": swarm_depth.clone().unwrap_or(Value::Null),
+            "run_in_background": run_in_background.clone().unwrap_or(Value::Null),
             "error": error,
             "bound_model": cloned_for_keys(payload, &["bound_model", "boundModel", "model"]),
             "model_preference": cloned_for_keys(payload, &["model_preference", "modelPreference"]),
@@ -236,10 +252,10 @@ pub(super) fn translate_subagent_updated(
                 "subagent_type": subagent_type,
                 "parent_tool_call_id": parent_tool_call_id,
                 "suspended_reason": null,
-                "swarm_index": cloned_for_keys(payload, &["swarm_index", "swarmIndex"]),
-                "parent_agent_id": cloned_for_keys(payload, &["parent_agent_id", "parentAgentId"]),
-                "swarm_depth": cloned_for_keys(payload, &["swarm_depth", "swarmDepth"]),
-                "run_in_background": cloned_for_keys(payload, &["run_in_background", "runInBackground"]),
+                "swarm_index": swarm_index.clone().unwrap_or(Value::Null),
+                "parent_agent_id": parent_agent_id,
+                "swarm_depth": swarm_depth.unwrap_or(Value::Null),
+                "run_in_background": run_in_background.unwrap_or(Value::Null),
                 "bound_model": cloned_for_keys(payload, &["bound_model", "boundModel", "model"]),
                 "model_preference": cloned_for_keys(payload, &["model_preference", "modelPreference"]),
             });

@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { IconButton } from "@/ui/icon-button";
 import { StatusDot } from "@/ui/status-dot";
 import {
+  sessionRuntimeIndicatorDotKind,
   sessionRuntimeIndicatorLabel,
   summarizeSessionRuntimeIndicators,
 } from "./session-runtime-indicator";
@@ -42,13 +43,7 @@ export function AppSidebar({
       K
       {runtimeIndicator !== "hidden" && (
         <StatusDot
-          status={
-            runtimeIndicator === "working"
-              ? "running"
-              : runtimeIndicator === "error"
-                ? "error"
-                : "ok"
-          }
+          status={sessionRuntimeIndicatorDotKind(runtimeIndicator)}
           className="absolute -right-[2px] -top-[2px] size-[6px]"
           title={sessionRuntimeIndicatorLabel(runtimeIndicator)}
         />

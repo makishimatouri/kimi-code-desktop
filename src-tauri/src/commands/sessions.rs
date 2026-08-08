@@ -31,6 +31,7 @@ use crate::runtime::client::{
     RuntimeClient, SessionDescriptor, SessionsCreateParams, SessionsListParams,
 };
 use crate::runtime::host::RuntimeHost;
+use crate::runtime::runtime_error_message;
 use crate::runtime::supervisor::RuntimeError;
 use crate::session_files;
 use crate::session_influence;
@@ -99,19 +100,6 @@ fn filter_sessions(sessions: Vec<Value>, q: Option<&str>, archived: Option<bool>
             true
         })
         .collect()
-}
-
-/// Command-level error mapping, mirroring the auth family: a runtime
-/// `Rejected` (well-formed `ok: false`) surfaces its code/message verbatim;
-/// fatal failures (protocol, io, timeout, unexpected exit, readiness) surface
-/// as an operation failure.
-fn runtime_error_message(operation: &str, err: RuntimeError) -> String {
-    match err {
-        RuntimeError::Rejected(body) => {
-            format!("{operation} rejected: {}: {}", body.code, body.message)
-        }
-        other => format!("{operation} failed: {other}"),
-    }
 }
 
 /// Enumerate every runtime session via cursor pagination. Per-page calls are
@@ -349,8 +337,8 @@ pub async fn create_session(
     .map_err(|e| format!("Failed to join create_session: {e}"))??;
 
     // The session config snapshot is fed by the host pump from runtime
-    // `session.config` events (the ACP `set_session_config_from_response`
-    // seeding is gone with the cutover).
+    // `session.config` events (`set_session_config_from_response`), which
+    // also persists it for lazy-connect replay after restart.
     get_session(app, session_id).await
 }
 
@@ -377,6 +365,9 @@ pub async fn delete_session(app: tauri::AppHandle, session_id: String) -> Result
             Err(err) if session_store::is_session_not_found(&err) => {}
             Err(err) => return Err(runtime_error_message("sessions.delete", err)),
         }
+        // Drop the host session slot: a stale `open` slot would short-circuit
+        // the next `wire_connect` for this id and fail its first `turn.start`.
+        host.forget_session(&session_id);
         session_store::delete_session_dir(&session_id)
     })
     .await

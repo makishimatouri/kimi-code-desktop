@@ -47,6 +47,7 @@ import {
   questionRespondParamsSchema,
   type TurnStartParams,
 } from './protocol-schemas';
+import { routeRuntimeTurnInput } from './slash-router';
 
 /** A live turn started through `turn.start`, awaiting its terminal event. */
 export interface ActiveTurnRegistration {
@@ -157,43 +158,70 @@ export function createTurnHandlers(ctx: RuntimeHandlerContext): RuntimeHandlerEn
     const engine = requireEngineContext(ctx);
     registerActiveTurn(engine, params.sessionId, params.requestId);
     try {
-      const agent = engine.klient.session(params.sessionId).agent(MAIN_AGENT_ID);
-      if (params.model === undefined) {
-        // CLI prompt parity: the node-sdk binds the default model on first
-        // use before interacting with an unbound main agent (`agentScope` →
-        // `materializeMainAgent`). Mirror it so a session that reaches prompt
-        // without a binding — a journal that predates the create/open default
-        // bind, or a `default_model` configured mid-run — inherits the
-        // default instead of failing the turn with "Model not set".
-        await ensureLiveDefaultModelBinding(engine, params.sessionId);
-      }
-      if (params.model !== undefined) {
-        try {
-          await agent.setModel(params.model);
-        } catch (error) {
-          // setModel resolves the alias against the configured catalog, so its
-          // `config.invalid` failure is the turn surface's model_not_found.
-          throw readEngineErrorCode(error) === 'config.invalid'
-            ? new RuntimeRequestError(
-                'model_not_found',
-                error instanceof Error ? error.message : String(error),
-                false,
-              )
-            : mapTurnError(error);
+      const session = engine.klient.session(params.sessionId);
+      const agent = session.agent(MAIN_AGENT_ID);
+      const prepareLaunch = async (): Promise<void> => {
+        if (params.model === undefined) {
+          // CLI prompt parity: the node-sdk binds the default model on first
+          // use before interacting with an unbound main agent (`agentScope` →
+          // `materializeMainAgent`). Mirror it so a session that reaches prompt
+          // without a binding — a journal that predates the create/open default
+          // bind, or a `default_model` configured mid-run — inherits the
+          // default instead of failing the turn with "Model not set".
+          await ensureLiveDefaultModelBinding(engine, params.sessionId);
         }
-      }
-      if (params.planMode === true) {
-        // Idempotent: the Desktop may have already entered plan mode through
-        // session.setMode (M4) — the ACP-era wire always re-sent the mode
-        // state with the prompt, and re-entering an active plan mode throws
-        // `session.plan_mode_invalid` engine-side.
-        if ((await agent.getPlan()) === null) {
-          await agent.enterPlan();
+        if (params.model !== undefined) {
+          try {
+            await agent.setModel(params.model);
+          } catch (error) {
+            // setModel resolves the alias against the configured catalog, so its
+            // `config.invalid` failure is the turn surface's model_not_found.
+            throw readEngineErrorCode(error) === 'config.invalid'
+              ? new RuntimeRequestError(
+                  'model_not_found',
+                  error instanceof Error ? error.message : String(error),
+                  false,
+                )
+              : mapTurnError(error);
+          }
         }
-      }
-      const launched = await agent.prompt({
-        input: toPromptParts(params.input, request.method),
+        if (params.planMode === true) {
+          // Idempotent: the Desktop may have already entered plan mode through
+          // session.setMode (M4) — the ACP-era wire always re-sent the mode
+          // state with the prompt, and re-entering an active plan mode throws
+          // `session.plan_mode_invalid` engine-side.
+          if ((await agent.getPlan()) === null) {
+            await agent.enterPlan();
+          }
+        }
+      };
+      const routed = await routeRuntimeTurnInput(params.input, {
+        listSkills: () => session.skills.list(),
+        launchPrompt: async () => {
+          await prepareLaunch();
+          return agent.prompt({ input: toPromptParts(params.input, request.method) });
+        },
+        launchSkill: async (name, args) => {
+          await prepareLaunch();
+          return agent.activateSkill({ name, args });
+        },
+        compact: (instruction) => agent.compact({ instruction }),
+        getMcpServers: () => agent.getMcpServers(),
       });
+      if (routed.kind === 'local') {
+        await ctx.emitSessionEvent(params.sessionId, 'content.delta', {
+          text: routed.text,
+          requestId: params.requestId,
+        });
+        await ctx.emitSessionEvent(params.sessionId, 'turn.completed', {
+          requestId: params.requestId,
+        });
+        releaseActiveTurn(engine, params.sessionId, params.requestId);
+        // Runtime-local slash commands do not own an engine turn id. The
+        // visible content + terminal events above complete the Desktop turn.
+        return { requestId: params.requestId, turnId: null };
+      }
+      const launched = routed.launched;
       if (launched === undefined) {
         // The engine accepted the prompt but launched no turn (hook-blocked
         // or a launch failure); no terminal event will follow, so the

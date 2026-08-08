@@ -14,20 +14,12 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{mpsc, Arc, Mutex, MutexGuard};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Poison-tolerant mutex acquisition, mirroring the supervisor's helper.
 pub(super) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-pub(super) fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 /// Last projected `session.status` for one session (drives `wire_status`).
@@ -220,18 +212,90 @@ impl super::RuntimeHost {
         ids
     }
 
-    /// Last `session.config` payload observed for the session.
+    /// Last `session.config` payload observed for the session; after a
+    /// restart (empty slot) it falls back to the persisted session-config
+    /// state, so `initialize` and `get_session_config_state` still serve the
+    /// last known options before the pump sees a fresh `session.config`
+    /// event. Unknown/empty persisted states stay absent (no fabricated
+    /// option sets).
     pub fn session_config_snapshot(&self, session_id: &str) -> Option<Value> {
-        lock(&self.shared.sessions)
+        let live = lock(&self.shared.sessions)
             .get(session_id)
-            .and_then(|slot| slot.config_snapshot.clone())
+            .and_then(|slot| slot.config_snapshot.clone());
+        if live.is_some() {
+            return live;
+        }
+        crate::session_config::resolve_session_config(session_id).and_then(|state| {
+            let known = state.status == crate::session_config::SessionConfigStatus::Known
+                && !state.options.is_empty();
+            known.then(|| crate::session_config::session_config_state_to_value(&state))
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::host::{RuntimeHost, WireSink};
     use crate::runtime::protocol::ErrorBody;
+    use crate::test_env::lock::set_kimi_code_home;
+    use tempfile::tempdir;
+
+    struct NoopSink;
+
+    impl WireSink for NoopSink {
+        fn emit(&self, _session_id: &str, _message: String) {}
+    }
+
+    #[test]
+    fn session_config_snapshot_falls_back_to_persisted_state_on_cold_start() {
+        let dir = tempdir().expect("tempdir");
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(&home).expect("create home");
+        let _home_guard = set_kimi_code_home(&home);
+        let session_id = "session_config_cold_start";
+        let session_dir = home.join("sessions").join("wd_cold").join(session_id);
+        std::fs::create_dir_all(&session_dir).expect("create session dir");
+
+        crate::session_config::set_session_config_from_response(
+            session_id,
+            &json!({
+                "options": [
+                    { "id": "model", "optionType": "enum", "currentValue": "kimi-k2" },
+                ]
+            }),
+        );
+        let host = RuntimeHost::with_sink(Arc::new(NoopSink));
+
+        // No live slot yet (restart): the persisted state is served.
+        crate::session_config::clear_session_config(session_id);
+        let snapshot = host
+            .session_config_snapshot(session_id)
+            .expect("persisted fallback");
+        assert_eq!(snapshot["options"][0]["id"], json!("model"));
+
+        // A live pump projection wins over the persisted state.
+        lock(&host.shared.sessions).insert(
+            session_id.to_string(),
+            SessionSlot {
+                config_snapshot: Some(json!({ "model": "live-model" })),
+                ..SessionSlot::default()
+            },
+        );
+        assert_eq!(
+            host.session_config_snapshot(session_id).unwrap()["model"],
+            json!("live-model")
+        );
+
+        // Unknown persisted state stays absent: no fabricated option sets.
+        crate::session_config::mark_session_config_unknown(session_id);
+        lock(&host.shared.sessions).remove(session_id);
+        assert!(
+            host.session_config_snapshot(session_id).is_none(),
+            "unknown state must not surface as a snapshot"
+        );
+    }
+
     #[test]
     fn turn_failed_payload_maps_rejected_and_fatal_errors() {
         let rejected = turn_failed_payload(

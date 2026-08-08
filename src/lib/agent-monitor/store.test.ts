@@ -17,7 +17,7 @@ function task(patch: Partial<AgentTask>): AgentTask {
 
 describe("agent monitor store", () => {
   beforeEach(() => {
-    useAgentMonitorStore.setState({ tasks: [], selectedTaskId: null });
+    useAgentMonitorStore.setState({ tasks: [] });
   });
 
   it("groups swarm members by parent tool call and derives aggregate progress", () => {
@@ -47,13 +47,10 @@ describe("agent monitor store", () => {
     expect(groups[1]?.tasks[0]?.id).toBe("standalone");
   });
 
-  it("keeps cancelled distinct from failed and clears only the requested session", () => {
+  it("clears only the requested session", () => {
     const store = useAgentMonitorStore.getState();
     store.upsertTask(task({}));
     store.upsertTask(task({ id: "other", sessionId: "session-2" }));
-
-    store.cancelTask("agent-1");
-    expect(useAgentMonitorStore.getState().tasks[0]?.status).toBe("cancelled");
 
     store.clearSession("session-1");
     expect(useAgentMonitorStore.getState().tasks.map((entry) => entry.id)).toEqual(["other"]);

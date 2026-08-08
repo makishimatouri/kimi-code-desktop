@@ -1,13 +1,6 @@
 import { Goal, LoaderCircle, Pause, Play, X } from "lucide-react";
 import { useState } from "react";
-import type { GoalItem } from "@/lib/goal";
-
-const STATUS_LABELS: Record<GoalItem["status"], string> = {
-  active: "运行中",
-  paused: "已暂停",
-  blocked: "已阻塞",
-  complete: "已完成",
-};
+import { GOAL_STATUS_LABELS, type GoalItem } from "@/lib/goal";
 
 export function GoalCard({
   goal,
@@ -34,7 +27,7 @@ export function GoalCard({
             {goal.objective}
           </p>
           <span className="shrink-0 rounded-r1 bg-hover px-1.5 py-0.5 font-mono text-[9px] text-muted">
-            {STATUS_LABELS[goal.status]}
+            {GOAL_STATUS_LABELS[goal.status]}
           </span>
         </div>
         {goal.completionCriterion && (
@@ -43,7 +36,7 @@ export function GoalCard({
           </p>
         )}
         {goal.terminalReason && (
-          <p className="mt-1.5 text-[10px] leading-relaxed text-warning">{goal.terminalReason}</p>
+          <p className="mt-1.5 text-[10px] leading-relaxed text-warn">{goal.terminalReason}</p>
         )}
         <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 font-mono text-[9.5px] text-faint">
           <span>

@@ -2,10 +2,9 @@ import { Bot, ChevronRight } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { SlashCommandDef } from "@/lib/slash-command-catalog";
 import { groupAgentTasks, useAgentMonitorStore } from "@/lib/agent-monitor/store";
-import { statusToDotKind } from "@/lib/swarm/swarmCardRows";
 import { cn } from "@/lib/utils";
 import { Expandable } from "@/ui/expandable";
-import { StatusDot } from "@/ui/status-dot";
+import { StatusDot, statusToDotKind } from "@/ui/status-dot";
 import { SessionInfluencePanel } from "./session-influence-panel";
 
 const STATUS_LABELS = {

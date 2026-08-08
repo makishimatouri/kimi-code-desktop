@@ -150,6 +150,13 @@ pub(super) fn translate_turn_failed(
         .unwrap_or(false);
     vec![
         wire_prompt_error_message(&request_id, code, message, retryable),
-        session_status_wire(state, session_id, "error", Some(code), Some(message), None),
+        session_status_wire(
+            state,
+            session_id,
+            "error",
+            Some(code),
+            Some(message),
+            Some(&request_id),
+        ),
     ]
 }

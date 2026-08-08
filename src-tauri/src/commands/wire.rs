@@ -41,8 +41,7 @@ use crate::goal_store;
 use crate::runtime::client::{
     ApprovalDecision, ApprovalRespondParams, ApprovalScope, ContentPart, MediaRef, PromptInput,
     QuestionRespondParams, QuestionResult, RuntimeClient, SessionPermissionMode,
-    SessionReplayParams, SessionSetModeParams, SessionSetModeResult, SessionsUpdateParams,
-    TurnStartParams,
+    SessionSetModeParams, SessionSetModeResult, SessionsUpdateParams, TurnStartParams,
 };
 use crate::runtime::host::RuntimeHost;
 use crate::session_compat::{
@@ -63,13 +62,6 @@ use tauri::{AppHandle, Manager};
 /// Bounded runtime call budget for wire RPCs, matching the host `CALL_TIMEOUT`
 /// (open/close/turns/responds) and `commands/auth.rs`.
 const WIRE_CALL_TIMEOUT: Duration = Duration::from_secs(15);
-
-/// Quiet period before the replay reply, standing in for the ACP-era
-/// `wait_for_session_update_quiescence`: the runtime emits the whole replay
-/// burst before answering `session.replay`, but the host pump may still be
-/// translating the tail frames when the response resolves. Waiting keeps the
-/// command-side reply from overtaking the burst.
-const REPLAY_QUIESCENCE: Duration = Duration::from_millis(150);
 
 // ---------------------------------------------------------------------------
 // Commands
@@ -236,29 +228,21 @@ fn handle_initialize(
     Ok(())
 }
 
-/// `replay` — stream the session history through `session.replay` (the burst
-/// frames reach the pump and are translated as ordinary session events), then
-/// close the burst with the ACP-shaped reply (`{status:"finished"}`).
+/// `replay` — translate the persisted main-agent journal directly through the
+/// desktop session store. The runtime already restores its own engine context
+/// during `session.open`; replaying every agent journal here creates an
+/// unbounded Node -> Rust -> WebView event burst and duplicates ownership of
+/// the user-visible timeline.
 fn handle_replay(
     app: &AppHandle,
-    host: &RuntimeHost,
+    _host: &RuntimeHost,
     session_id: &str,
     id: Option<Value>,
 ) -> Result<(), String> {
-    let supervisor = host.ensure_started()?;
-    let client = RuntimeClient::new(&supervisor);
-    let result = client
-        .session_replay(
-            &SessionReplayParams {
-                session_id: session_id.to_string(),
-                from_seq: None,
-                limit: None,
-            },
-            WIRE_CALL_TIMEOUT,
-        )
-        .map_err(|err| format!("runtime session.replay failed: {err}"))?;
-    if result.events > 0 {
-        std::thread::sleep(REPLAY_QUIESCENCE);
+    let messages = session_store::replay_session_history(session_id)?;
+    let event_count = messages.len();
+    for message in messages {
+        emit_wire_message(app, session_id, message);
     }
     if let Some(id) = id {
         emit_wire_message(
@@ -267,7 +251,7 @@ fn handle_replay(
             json!({
                 "jsonrpc": "2.0",
                 "id": id,
-                "result": { "status": "finished", "events": result.events, "requests": 0 },
+                "result": { "status": "finished", "events": event_count, "requests": 0 },
             })
             .to_string(),
         );
@@ -321,11 +305,13 @@ fn handle_prompt(
             .filter(|goal_id| !goal_id.trim().is_empty())
             .map(str::to_string);
     }
+    let visible_input = build_visible_turn_input(&expanded)?;
     let input = build_turn_input(&expanded, modes.swarm_mode, modes.goal_mode)?;
     host.start_turn(TurnStartParams {
         session_id: session_id.to_string(),
         request_id: prompt_id,
         input,
+        visible_input: Some(visible_input),
         model: None,
         plan_mode: Some(modes.plan_mode),
     })
@@ -1005,6 +991,25 @@ fn build_turn_input(
     Ok(PromptInput::Parts(parts))
 }
 
+/// Build the user-owned projection of a turn. This is deliberately separate
+/// from `build_turn_input`: desktop compatibility instructions remain an
+/// implementation detail for the model and must not be surfaced as authored
+/// user content by live `TurnBegin`, replay, title, or fallback paths.
+fn build_visible_turn_input(params: &Value) -> Result<PromptInput, String> {
+    if let Some(slash) = slash_command_text(params) {
+        return Ok(PromptInput::Text(slash));
+    }
+    let parts = match params.get("user_input").cloned().unwrap_or(Value::Null) {
+        Value::String(text) => vec![ContentPart::text(text)],
+        Value::Array(items) => items
+            .iter()
+            .map(content_part_from_value)
+            .collect::<Result<Vec<_>, _>>()?,
+        other => vec![ContentPart::text(other.to_string())],
+    };
+    Ok(PromptInput::Parts(parts))
+}
+
 fn slash_command_text(params: &Value) -> Option<String> {
     match params.get("user_input") {
         Some(Value::String(s)) if s.trim().starts_with('/') => Some(s.trim().to_string()),
@@ -1163,6 +1168,22 @@ mod tests {
             .unwrap()
             .contains("kind=\"swarm\""));
         assert!(parts[2]["text"].as_str().unwrap().contains("kind=\"goal\""));
+    }
+
+    #[test]
+    fn visible_turn_input_never_contains_desktop_compat_blocks() {
+        let visible =
+            build_visible_turn_input(&json!({ "user_input": "do it" })).expect("visible input");
+        assert_eq!(
+            input_json(&visible),
+            json!([{ "type": "text", "text": "do it" }])
+        );
+
+        let model =
+            build_turn_input(&json!({ "user_input": "do it" }), true, true).expect("model input");
+        let model_json = input_json(&model);
+        assert_eq!(model_json.as_array().map(Vec::len), Some(3));
+        assert_ne!(input_json(&visible), model_json);
     }
 
     #[test]

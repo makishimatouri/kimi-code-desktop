@@ -202,7 +202,7 @@ describe('runtime-v1 server', () => {
     const { frames, server } = setup();
     await server.accept(hello());
     // M3 wave 3: every parity gate is on and `events` lists the full
-    // SESSION_EVENT_NAMES set (base 15 + fidelity 10).
+    // SESSION_EVENT_NAMES set (base 16 + fidelity 10).
     expect(frames[0]).toMatchObject({
       result: {
         capabilities: {
@@ -359,6 +359,37 @@ describe('runtime-v1 contract registry', () => {
     expect(Object.keys(runtimeEventPayloadSchemas).sort()).toEqual(
       [...RUNTIME_SCOPED_EVENTS].sort(),
     );
+  });
+
+  it('pins the complete native goal.updated snapshot contract', () => {
+    const schema = sessionEventPayloadSchemas['goal.updated'];
+    expect(schema.safeParse({ snapshot: null }).success).toBe(true);
+    expect(
+      schema.safeParse({
+        snapshot: {
+          goalId: 'goal-1',
+          objective: 'Ship Goal events',
+          status: 'active',
+          turnsUsed: 1,
+          tokensUsed: 42,
+          wallClockMs: 900,
+          budget: {
+            tokenBudget: null,
+            turnBudget: 5,
+            wallClockBudgetMs: null,
+            remainingTokens: null,
+            remainingTurns: 4,
+            remainingWallClockMs: null,
+            tokenBudgetReached: false,
+            turnBudgetReached: false,
+            wallClockBudgetReached: false,
+            overBudget: false,
+          },
+        },
+        change: { kind: 'lifecycle', status: 'active', actor: 'user' },
+      }).success,
+    ).toBe(true);
+    expect(schema.safeParse({ snapshot: { goalId: 'goal-1' } }).success).toBe(false);
   });
 
   it('pins the turn.start requestId contract', () => {

@@ -13,7 +13,7 @@
 
 **测试计数**：`cargo test` 458 → 337（随删模块内嵌测试与 ACP fixtures 移除）；`npm test` 534；`runtime:typecheck` + `runtime:test` 116；`smoke:runtime`（临时 `KIMI_CODE_HOME`，离线安全）全绿。
 
-**门禁最终态**：`cargo test` 337 / `npm test` 534 / `runtime:typecheck`+`runtime:test` 116 / `smoke:runtime` / `check:quick` / `git diff --check` 全绿。`release:preflight` 换 `Assert-SourceRuntime`（artifact 存在且非空、`runtime/UPSTREAM.md` commit == `apps/desktop-runtime/src/protocol.ts` 的 `KIMI_SOURCE_COMMIT`、无 PATH `kimi` 依赖、无 ACP 入口 + `acp-smoke.mjs` 不存在）。发布流水线（release.yml）以 Node 24.15.0 + pnpm 10.33.0 跑 `runtime:install` + `smoke:runtime`。
+**门禁最终态**：`cargo test` 337 / `npm test` 534 / `runtime:typecheck`+`runtime:test` 116 / `smoke:runtime` / `check:quick` / `git diff --check` 全绿。`release:preflight` 换 `Assert-SourceRuntime`（artifact 存在且非空、`runtime/UPSTREAM.md` commit == `apps/desktop-runtime/src/protocol.ts` 的 `KIMI_SOURCE_COMMIT`、无 PATH `kimi` 依赖、无 ACP 入口 + `acp-smoke.mjs` 不存在）。发布流水线（release.yml）以 Node 24.15.0 + pnpm 10.33.0 跑 `runtime:install` + `smoke:runtime`（注：release.yml 与 ci.yml 的 `pnpm/action-setup@v4` 实际 pin pnpm 10.34.5，外层 devDependency 同值；`kimi-code/package.json` 的 `packageManager` 已提升到 `pnpm@10.34.5` 对齐，属受控集成改动，见 `runtime/AGENTS.md`；`UPSTREAM.md` 冻结表记录上游原始 10.33.0）。
 
 **已知文案偏差（W1-D 遗留）**：`notifyGlobalConfigApplied`（`src/lib/config-update-toast.ts:13/24`，i18n 键 `src/lib/i18n.tsx:439/441`）统一显示“空闲会话将重启以应用”文案；结构化字段写（`config.update`）已热生效不重启会话，仅 raw `config.toml`/`mcp.json` 写后由 supervisor 重建。前端零改动原则下不改代码，登记为已知文案偏差，留后续产品决策。
 

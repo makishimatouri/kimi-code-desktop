@@ -14,7 +14,7 @@ const screenshotOutput = [
 
 describe("AgentToolCard", () => {
   beforeEach(() => {
-    useAgentMonitorStore.setState({ tasks: [], selectedTaskId: null });
+    useAgentMonitorStore.setState({ tasks: [] });
   });
 
   it("renders a dedicated agent card with structured fields", () => {

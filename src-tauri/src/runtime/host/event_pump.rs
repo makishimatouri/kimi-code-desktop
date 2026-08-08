@@ -14,7 +14,8 @@
 //! error — the same translate -> emit path as real events) before the pump
 //! exits; the next `ensure_started` joins this thread before rebuilding.
 
-use super::session::{lock, now_ms, ControlMessage, HostShared};
+use super::session::{lock, ControlMessage, HostShared};
+use crate::runtime::now_ms;
 use crate::runtime::protocol::EventFrame;
 use crate::runtime::supervisor::{RuntimeSupervisor, SupervisorState};
 use serde_json::{json, Value};
@@ -84,8 +85,12 @@ fn run(
                 }
                 _ => {}
             },
-            // The host dropped the supervisor mid-rebuild; nothing more can
-            // arrive. Any later control message defers to the next generation.
+            // The pump holds its own `Arc` to the supervisor, so the
+            // supervisor outlives this thread: `Disconnected` means the
+            // supervisor itself dropped the event sender (runtime exit or
+            // shutdown), not that the host dropped it mid-rebuild. No frame
+            // can arrive after that; later control messages defer to the next
+            // generation.
             Err(mpsc::RecvTimeoutError::Disconnected) => return,
         }
     }
@@ -194,78 +199,88 @@ fn project_frame(shared: &HostShared, frame: &EventFrame) {
     else {
         return;
     };
-    let mut sessions = lock(&shared.sessions);
-    let slot = sessions.entry(session_id.clone()).or_default();
-    match event.as_str() {
-        "session.status" => {
-            slot.status.state = payload
-                .get("state")
-                .and_then(Value::as_str)
-                .unwrap_or("idle")
-                .to_string();
-            slot.status.reason = payload
-                .get("reason")
-                .and_then(Value::as_str)
-                .map(str::to_string);
-            slot.status.detail = payload
-                .get("detail")
-                .and_then(Value::as_str)
-                .map(str::to_string);
-            slot.status.seq += 1;
-            slot.status.updated_at_ms = now_ms();
-        }
-        "approval.requested" => {
-            if let Some(id) = payload.get("approvalId").and_then(Value::as_str) {
-                slot.pending_approvals.insert(id.to_string());
-            }
-        }
-        "question.requested" => {
-            if let Some(id) = payload.get("questionId").and_then(Value::as_str) {
-                slot.pending_questions.insert(id.to_string());
-            }
-        }
-        "session.config" => {
-            slot.config_snapshot = Some(payload.clone());
-        }
-        // Turn terminals imply a wire status change (turn.rs emits it with
-        // the terminal sequence); mirror it so `wire_status` stays in step
-        // with what the UI saw. runtime-v1 has no turn.cancelled: cancelled
-        // turns arrive as turn.failed with code `cancelled`.
-        "turn.completed" => {
-            if let Some(id) = payload.get("requestId").and_then(Value::as_str) {
-                slot.in_flight.remove(id);
-            }
-            slot.status.state = "idle".to_string();
-            slot.status.reason = Some("finished".to_string());
-            slot.status.detail = None;
-            slot.status.seq += 1;
-            slot.status.updated_at_ms = now_ms();
-        }
-        "turn.failed" => {
-            if let Some(id) = payload.get("requestId").and_then(Value::as_str) {
-                slot.in_flight.remove(id);
-            }
-            let error = payload.get("error").filter(|error| error.is_object());
-            let code = error
-                .and_then(|error| error.get("code"))
-                .and_then(Value::as_str)
-                .unwrap_or("turn_failed");
-            if code == "cancelled" {
-                slot.status.state = "idle".to_string();
-                slot.status.reason = Some("cancelled".to_string());
-                slot.status.detail = None;
-            } else {
-                slot.status.state = "error".to_string();
-                slot.status.reason = Some(code.to_string());
-                slot.status.detail = error
-                    .and_then(|error| error.get("message"))
+    let mut persist_config = false;
+    {
+        let mut sessions = lock(&shared.sessions);
+        let slot = sessions.entry(session_id.clone()).or_default();
+        match event.as_str() {
+            "session.status" => {
+                slot.status.state = payload
+                    .get("state")
+                    .and_then(Value::as_str)
+                    .unwrap_or("idle")
+                    .to_string();
+                slot.status.reason = payload
+                    .get("reason")
                     .and_then(Value::as_str)
                     .map(str::to_string);
+                slot.status.detail = payload
+                    .get("detail")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                slot.status.seq += 1;
+                slot.status.updated_at_ms = now_ms();
             }
-            slot.status.seq += 1;
-            slot.status.updated_at_ms = now_ms();
+            "approval.requested" => {
+                if let Some(id) = payload.get("approvalId").and_then(Value::as_str) {
+                    slot.pending_approvals.insert(id.to_string());
+                }
+            }
+            "question.requested" => {
+                if let Some(id) = payload.get("questionId").and_then(Value::as_str) {
+                    slot.pending_questions.insert(id.to_string());
+                }
+            }
+            "session.config" => {
+                slot.config_snapshot = Some(payload.clone());
+                persist_config = true;
+            }
+            // Turn terminals imply a wire status change (turn.rs emits it
+            // with the terminal sequence); mirror it so `wire_status` stays
+            // in step with what the UI saw. runtime-v1 has no turn.cancelled:
+            // cancelled turns arrive as turn.failed with code `cancelled`.
+            "turn.completed" => {
+                if let Some(id) = payload.get("requestId").and_then(Value::as_str) {
+                    slot.in_flight.remove(id);
+                }
+                slot.status.state = "idle".to_string();
+                slot.status.reason = Some("finished".to_string());
+                slot.status.detail = None;
+                slot.status.seq += 1;
+                slot.status.updated_at_ms = now_ms();
+            }
+            "turn.failed" => {
+                if let Some(id) = payload.get("requestId").and_then(Value::as_str) {
+                    slot.in_flight.remove(id);
+                }
+                let error = payload.get("error").filter(|error| error.is_object());
+                let code = error
+                    .and_then(|error| error.get("code"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("turn_failed");
+                if code == "cancelled" {
+                    slot.status.state = "idle".to_string();
+                    slot.status.reason = Some("cancelled".to_string());
+                    slot.status.detail = None;
+                } else {
+                    slot.status.state = "error".to_string();
+                    slot.status.reason = Some(code.to_string());
+                    slot.status.detail = error
+                        .and_then(|error| error.get("message"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
+                }
+                slot.status.seq += 1;
+                slot.status.updated_at_ms = now_ms();
+            }
+            _ => {}
         }
-        _ => {}
+    }
+    if persist_config {
+        // Feed the session-config store (persisted for lazy-connect replay
+        // after restart). Outside the sessions lock: the persist path does
+        // its own filesystem I/O. Empty/unknown payloads map to `Unknown`.
+        crate::session_config::set_session_config_from_response(session_id, payload);
     }
 }
 
@@ -322,5 +337,87 @@ fn fail_all_sessions(shared: &HostShared, supervisor: &RuntimeSupervisor) {
         slot.in_flight.clear();
         slot.pending_approvals.clear();
         slot.pending_questions.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::host::{Sink, WireSink};
+    use crate::runtime::translate::WireTranslator;
+    use crate::test_env::lock::set_kimi_code_home;
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, AtomicU64};
+    use std::sync::{Arc, Mutex};
+    use tempfile::tempdir;
+
+    struct NoopSink;
+
+    impl WireSink for NoopSink {
+        fn emit(&self, _session_id: &str, _message: String) {}
+    }
+
+    #[test]
+    fn session_config_event_persists_and_replay_restores_config_option_update() {
+        let dir = tempdir().expect("tempdir");
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(&home).expect("create home");
+        let _home_guard = set_kimi_code_home(&home);
+        let session_id = "session_config_persist";
+        let session_dir = home.join("sessions").join("wd_cfg").join(session_id);
+        std::fs::create_dir_all(&session_dir).expect("create session dir");
+
+        let shared = Arc::new(HostShared {
+            sink: Sink::Custom(Arc::new(NoopSink)),
+            sessions: Mutex::new(HashMap::new()),
+            translator: Mutex::new(WireTranslator::new()),
+            session_ops: Mutex::new(HashMap::new()),
+            control_tx: Mutex::new(None),
+            deferred: Mutex::new(Vec::new()),
+            next_generation: AtomicU64::new(1),
+            shutting_down: AtomicBool::new(false),
+            data_root: home.clone(),
+        });
+        let frame = EventFrame::Session {
+            session_id: session_id.to_string(),
+            seq: 1,
+            event: "session.config".to_string(),
+            payload: json!({
+                "options": [
+                    { "id": "model", "optionType": "enum", "currentValue": "kimi-k2",
+                      "options": [{ "value": "kimi-k2" }] },
+                ]
+            }),
+        };
+        project_frame(&shared, &frame);
+
+        // The pump fed the session-config store and persisted state.json.
+        let state = crate::session_config::get_session_config(session_id).expect("in-memory");
+        assert_eq!(
+            state.status,
+            crate::session_config::SessionConfigStatus::Known
+        );
+        let state_path = session_dir.join("state.json");
+        let content = std::fs::read_to_string(&state_path).expect("state.json written");
+        let parsed: Value = serde_json::from_str(&content).expect("state.json parses");
+        assert_eq!(
+            parsed["custom"]["kimi_code_desktop"]["session_config"]["status"],
+            json!("known")
+        );
+        assert_eq!(
+            parsed["custom"]["kimi_code_desktop"]["session_config"]["options"][0]["id"],
+            json!("model")
+        );
+
+        // Restart simulation: the in-memory store is empty, so replay falls
+        // back to the persisted snapshot and emits ConfigOptionUpdate.
+        crate::session_config::clear_session_config(session_id);
+        let messages = crate::session_store::replay_session_history(session_id).expect("replay");
+        let config_line = messages
+            .iter()
+            .find(|raw| raw.contains("ConfigOptionUpdate"))
+            .unwrap_or_else(|| panic!("no ConfigOptionUpdate in replay: {messages:?}"));
+        assert!(config_line.contains("\"status\":\"known\""), "{config_line}");
+        assert!(config_line.contains("\"id\":\"model\""), "{config_line}");
     }
 }

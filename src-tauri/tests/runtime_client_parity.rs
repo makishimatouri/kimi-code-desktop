@@ -3,7 +3,7 @@
 //! `protocol-parity.ts` on the Node side, `runtime/client_types.rs` here).
 //!
 //! Since wave 3 the fixture worker advertises the flipped capability
-//! surface (parity gates on, the full 25-event list) but implements no
+//! surface (parity gates on, the full 26-event list) but implements no
 //! parity business logic, so calls still surface a structured
 //! `not_implemented` rejection, and the typed params/results must
 //! serialize/deserialize field-by-field per the TS zod schemas. The fixture
@@ -93,7 +93,14 @@ fn parity_methods_are_rejected_as_not_implemented_by_the_fixture() {
     assert!(info.capabilities.auth);
     assert!(info.capabilities.usage);
     assert!(info.capabilities.fork);
-    assert_eq!(info.capabilities.events.len(), 25);
+    assert_eq!(info.capabilities.events.len(), 26);
+    assert!(
+        info.capabilities
+            .events
+            .iter()
+            .any(|event| event == "goal.updated"),
+        "capability snapshot must advertise goal.updated"
+    );
 
     let err = client
         .call(

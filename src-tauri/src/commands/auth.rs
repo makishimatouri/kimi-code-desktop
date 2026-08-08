@@ -24,7 +24,7 @@ use crate::runtime::client::{
     OAuthFlowStatus, RuntimeClient,
 };
 use crate::runtime::host::RuntimeHost;
-use crate::runtime::supervisor::RuntimeError;
+use crate::runtime::runtime_error_message;
 use serde_json::{json, Value};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -268,23 +268,11 @@ fn is_current_login_id(login_id: &str) -> bool {
         == Some(login_id)
 }
 
-/// Command-level error mapping: a runtime `Rejected` (well-formed `ok: false`,
-/// e.g. `unauthorized`) surfaces its code and message verbatim, which the
-/// frontend tolerates as a displayable error; fatal failures (protocol, io,
-/// timeout, unexpected exit, readiness) surface as an operation failure.
-fn runtime_error_message(operation: &str, err: RuntimeError) -> String {
-    match err {
-        RuntimeError::Rejected(body) => {
-            format!("{operation} rejected: {}: {}", body.code, body.message)
-        }
-        other => format!("{operation} failed: {other}"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::runtime::protocol::{ErrorBody, FaultCode, ProtocolFault};
+    use crate::runtime::supervisor::RuntimeError;
 
     fn pending_flow() -> OAuthFlowStart {
         OAuthFlowStart::Pending {

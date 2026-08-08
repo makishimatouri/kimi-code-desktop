@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Session, SessionStatus } from "@/lib/api/models";
 import {
   getSessionRuntimeIndicator,
+  sessionRuntimeIndicatorDotKind,
   summarizeSessionRuntimeIndicators,
 } from "./session-runtime-indicator";
 
@@ -46,5 +47,12 @@ describe("session runtime indicator", () => {
     expect(
       summarizeSessionRuntimeIndicators([session("idle", "idle"), session("error", "error")]),
     ).toBe("error");
+  });
+
+  it("maps indicators to StatusDot kinds shared by the sidebars", () => {
+    expect(sessionRuntimeIndicatorDotKind("working")).toBe("running");
+    expect(sessionRuntimeIndicatorDotKind("error")).toBe("error");
+    expect(sessionRuntimeIndicatorDotKind("connected")).toBe("ok");
+    expect(sessionRuntimeIndicatorDotKind("hidden")).toBe("idle");
   });
 });

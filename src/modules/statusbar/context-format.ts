@@ -1,22 +1,9 @@
 // 与原生 CLI footer 的 context 读数保持一致：
 // - 百分比优先用精确 token 数计算（ceil、clamp 到 [0,100]、非零至少 1%）
 // - token 数为 1024 进制紧凑格式（85.3k / 977k / 256k / 1.5M）
+import { formatTokenCount } from "@/lib/managed-usage";
 
-function trimDecimal(value: string): string {
-	return value.endsWith(".0") ? value.slice(0, -2) : value;
-}
-
-function formatScaled(value: number, suffix: string): string {
-	if (value >= 100) return `${Math.round(value)}${suffix}`;
-	return `${trimDecimal(value.toFixed(1))}${suffix}`;
-}
-
-export function formatTokenCount(n: number): string {
-	if (!Number.isFinite(n) || n < 0) return "0";
-	if (n >= 1048576) return formatScaled(n / 1048576, "M");
-	if (n >= 1024) return formatScaled(n / 1024, "k");
-	return `${Math.round(n)}`;
-}
+export { formatTokenCount };
 
 function hasExactWindow(
 	contextTokens?: number | null,

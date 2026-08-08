@@ -2964,7 +2964,8 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
           clearAwaitingFirstResponse();
         }
         const payload = (event as ApprovalRequestEvent).payload;
-        const tc = currentToolCallsRef.current.get(payload.tool_call_id);
+        const toolCallId = payload.tool_call_id ?? "";
+        const tc = currentToolCallsRef.current.get(toolCallId);
 
         if (isReplay) {
           const approvalState = {
@@ -2972,7 +2973,7 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
             action: payload.action,
             description: payload.description,
             sender: payload.sender,
-            toolCallId: payload.tool_call_id,
+            toolCallId: toolCallId,
             toolKind: payload.kind ?? null,
             rpcMessageId,
             submitted: true,
@@ -3029,7 +3030,7 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
           action: payload.action,
           description: payload.description,
           sender: payload.sender,
-          toolCallId: payload.tool_call_id,
+          toolCallId: toolCallId,
           toolKind: payload.kind ?? null,
           rpcMessageId,
           submitted: false,
@@ -3042,14 +3043,14 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
           tc.approval = approvalState;
         } else {
           const fallbackState: ToolCallState = {
-            id: payload.tool_call_id,
+            id: toolCallId,
             name: payload.action,
             arguments: "",
             argumentsComplete: false,
             messageId: undefined,
             approval: approvalState,
           };
-          currentToolCallsRef.current.set(payload.tool_call_id, fallbackState);
+          currentToolCallsRef.current.set(toolCallId, fallbackState);
         }
 
         let messageId = tc?.messageId;
@@ -3098,9 +3099,9 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
             },
           };
 
-          currentToolCallsRef.current.set(payload.tool_call_id, {
-            ...(currentToolCallsRef.current.get(payload.tool_call_id) ?? {
-              id: payload.tool_call_id,
+          currentToolCallsRef.current.set(toolCallId, {
+            ...(currentToolCallsRef.current.get(toolCallId) ?? {
+              id: toolCallId,
               name: payload.action,
               arguments: "",
               argumentsComplete: false,
@@ -3114,7 +3115,7 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
 
         pendingApprovalRequestsRef.current.set(payload.id, {
           requestId: payload.id,
-          toolCallId: payload.tool_call_id,
+          toolCallId: toolCallId,
           messageId,
           rpcId: rpcMessageId,
           submitted: false,
@@ -3254,20 +3255,21 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
           clearAwaitingFirstResponse();
         }
         const qPayload = (event as QuestionRequestEvent).payload;
+        const toolCallId = qPayload.tool_call_id ?? "";
         // ACP ask-user permission ids are `${parentId}:question:N`; prefer the
         // already-streamed AskUserQuestion tool card so we don't leave a
         // dangling Agent/Generic row beside the QuestionCard.
-        const parentToolCallId = resolveAskUserParentToolCallId(qPayload.tool_call_id);
+        const parentToolCallId = resolveAskUserParentToolCallId(toolCallId);
         const qtc =
-          currentToolCallsRef.current.get(qPayload.tool_call_id) ??
-          (parentToolCallId !== qPayload.tool_call_id
+          currentToolCallsRef.current.get(toolCallId) ??
+          (parentToolCallId !== toolCallId
             ? currentToolCallsRef.current.get(parentToolCallId)
             : undefined);
 
         if (isReplay) {
           const questionState = {
             id: qPayload.id,
-            toolCallId: qPayload.tool_call_id,
+            toolCallId: toolCallId,
             questions: qPayload.questions,
             rpcMessageId,
             submitted: true,
@@ -3312,7 +3314,7 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
 
         const questionState = {
           id: qPayload.id,
-          toolCallId: qPayload.tool_call_id,
+          toolCallId: toolCallId,
           questions: qPayload.questions,
           rpcMessageId,
           submitted: false,
@@ -3352,9 +3354,9 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
             },
           };
 
-          currentToolCallsRef.current.set(qPayload.tool_call_id, {
-            ...(currentToolCallsRef.current.get(qPayload.tool_call_id) ?? {
-              id: qPayload.tool_call_id,
+          currentToolCallsRef.current.set(toolCallId, {
+            ...(currentToolCallsRef.current.get(toolCallId) ?? {
+              id: toolCallId,
               name: "AskUserQuestion",
               arguments: "",
               argumentsComplete: false,
@@ -3367,10 +3369,10 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
         }
 
         // Alias permission toolCallId → parent message so respond/result stay linked.
-        if (parentToolCallId !== qPayload.tool_call_id && qtc?.messageId) {
-          currentToolCallsRef.current.set(qPayload.tool_call_id, {
-            ...(currentToolCallsRef.current.get(qPayload.tool_call_id) ?? {
-              id: qPayload.tool_call_id,
+        if (parentToolCallId !== toolCallId && qtc?.messageId) {
+          currentToolCallsRef.current.set(toolCallId, {
+            ...(currentToolCallsRef.current.get(toolCallId) ?? {
+              id: toolCallId,
               name: "AskUserQuestion",
               arguments: "",
               argumentsComplete: false,
@@ -3381,7 +3383,7 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
 
         pendingQuestionRequestsRef.current.set(qPayload.id, {
           requestId: qPayload.id,
-          toolCallId: qPayload.tool_call_id,
+          toolCallId: toolCallId,
           messageId: qMessageId,
           rpcId: rpcMessageId,
           submitted: false,

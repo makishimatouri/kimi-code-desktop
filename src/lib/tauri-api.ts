@@ -5,12 +5,12 @@ import {
   normalizeAgentRuntimeCapabilities,
 } from "@/lib/runtime-capabilities";
 import type { GoalItem, GoalStatus } from "@/lib/goal";
+import { normalizeGitDiffStats, type GitDiffStats } from "@/lib/git-diff";
 import { normalizeProvidersOverview, type ProvidersOverview } from "@/lib/provider-overview-api";
 import { normalizeSessionConfigState, type SessionConfigState } from "@/lib/session-config-state";
 import { stripThinkMarkup } from "@/lib/utils";
 import type { WorkspaceFileEntry as SessionFileEntry } from "@/lib/workspace-file-entry";
 import type {
-  GitDiffStats,
   GlobalConfig,
   Session,
   SessionStatus,
@@ -934,19 +934,7 @@ export async function getGitDiffStats(sessionId: string): Promise<GitDiffStats> 
   const data = await invoke<Record<string, unknown>>("get_git_diff_stats", {
     sessionId,
   });
-  return {
-    isGitRepo: Boolean(data.is_git_repo),
-    hasChanges: Boolean(data.has_changes),
-    totalAdditions: Number(data.total_additions ?? 0),
-    totalDeletions: Number(data.total_deletions ?? 0),
-    files: ((data.files as Array<Record<string, unknown>> | undefined) ?? []).map((file) => ({
-      path: String(file.path ?? ""),
-      additions: Number(file.additions ?? 0),
-      deletions: Number(file.deletions ?? 0),
-      status: file.status as "added" | "modified" | "deleted" | "renamed",
-    })),
-    error: typeof data.error === "string" ? data.error : undefined,
-  };
+  return normalizeGitDiffStats(data);
 }
 
 export async function sendNotification(title: string, body: string): Promise<void> {

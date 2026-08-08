@@ -1,4 +1,5 @@
 import type { Session } from "@/lib/api/models";
+import type { StatusDotKind } from "@/ui/status-dot";
 
 export type SessionRuntimeIndicator = "working" | "connected" | "error" | "hidden";
 
@@ -36,5 +37,21 @@ export function sessionRuntimeIndicatorLabel(indicator: SessionRuntimeIndicator)
       return "Runtime 连接异常";
     default:
       return "Runtime 未连接";
+  }
+}
+
+/** StatusDot kind for an indicator; callers hide the dot for "hidden" themselves. */
+export function sessionRuntimeIndicatorDotKind(
+  indicator: SessionRuntimeIndicator,
+): StatusDotKind {
+  switch (indicator) {
+    case "working":
+      return "running";
+    case "error":
+      return "error";
+    case "hidden":
+      return "idle";
+    default:
+      return "ok";
   }
 }

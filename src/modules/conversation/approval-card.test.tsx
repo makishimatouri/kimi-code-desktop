@@ -7,6 +7,7 @@ const approval = {
 	action: "Bash",
 	description: "$ npm run build",
 	sender: "kimi",
+	toolCallId: "tc-r1",
 };
 
 describe("ApprovalCard", () => {
@@ -39,6 +40,7 @@ describe("ApprovalCard", () => {
 					action: "ExitPlanMode",
 					description: "ExitPlanMode",
 					sender: "acp",
+					toolCallId: "tc-r-plan",
 				}}
 				display={[
 					{

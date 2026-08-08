@@ -196,7 +196,7 @@ export type ApprovalRequestEvent = {
     action: string;
     description: string;
     sender: string;
-    tool_call_id: string;
+    tool_call_id: string | null;
     /** ACP tool kind (read/search/execute/…) — preferred for auto-approve */
     kind?: string | null;
     /** Display blocks with preview content (diffs, shell commands) */
@@ -240,7 +240,7 @@ export type QuestionRequestEvent = {
   type: "QuestionRequest";
   payload: {
     id: string;
-    tool_call_id: string;
+    tool_call_id: string | null;
     questions: QuestionItem[];
   };
 };
@@ -342,6 +342,7 @@ export type SubagentLifecycleEvent = {
     description?: string | null;
     swarm_index?: number | null;
     swarm_depth?: number | null;
+    run_in_background?: boolean | null;
     error?: string | null;
     bound_model?: string | null;
     model_preference?: string | null;
@@ -497,7 +498,7 @@ export type ToolApprovalState = {
   action: string;
   description: string;
   sender: string;
-  toolCallId: string;
+  toolCallId?: string;
   toolKind?: string | null;
   rpcMessageId?: string | number;
   submitted?: boolean;
@@ -572,37 +573,6 @@ export type StepState = {
 };
 
 /**
- * Parse a JSONL file content into wire messages
- */
-export function parseWireMessages(jsonlContent: string): WireMessage[] {
-  const lines = jsonlContent.trim().split("\n");
-  const messages: WireMessage[] = [];
-
-  for (const line of lines) {
-    if (!line.trim()) continue;
-    try {
-      const parsed = JSON.parse(line) as WireMessage;
-      if (parsed.jsonrpc === "2.0") {
-        messages.push(parsed);
-      }
-    } catch {
-      console.warn("Failed to parse wire message:", line);
-    }
-  }
-
-  return messages;
-}
-
-/**
- * Normalize wire event type names that differ between server and client.
- * The Python backend uses class names (e.g. "ApprovalResponse") while
- * the client expects legacy names (e.g. "ApprovalRequestResolved").
- */
-const EVENT_TYPE_ALIASES: Record<string, string> = {
-  ApprovalResponse: "ApprovalRequestResolved",
-};
-
-/**
  * Extract event from wire message
  */
 export function extractEvent(message: WireMessage): WireEvent | null {
@@ -611,9 +581,8 @@ export function extractEvent(message: WireMessage): WireEvent | null {
   }
 
   const params = message.params as { type: string; payload: unknown };
-  const type = EVENT_TYPE_ALIASES[params.type] ?? params.type;
   return {
-    type,
+    type: params.type,
     payload: params.payload,
   } as WireEvent;
 }

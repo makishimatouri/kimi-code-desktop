@@ -5,9 +5,10 @@ import { join } from 'node:path';
 import {
   IAppendLogStore,
   ISessionIndex,
+  ISessionLegacyService,
   MAIN_AGENT_ID,
 } from '@moonshot-ai/agent-core-v2';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { EngineContext } from '../src/engine';
 import {
@@ -36,6 +37,14 @@ let homeDir: string;
 
 function wire(value: unknown): JsonValue {
   return JSON.parse(JSON.stringify(value)) as JsonValue;
+}
+
+function objectPayload(value: unknown): JsonObject {
+  const payload = wire(value);
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    throw new Error('expected object payload');
+  }
+  return payload as JsonObject;
 }
 
 async function writeJournal(
@@ -249,6 +258,8 @@ describe('planSessionReplay (synthetic journals, temp home)', () => {
       parentToolCallId: null,
       subagentType: null,
       description: 'explore',
+      parentAgentId: 'main',
+      swarmDepth: 0,
     });
     expect(wire(block[1]?.payload)).toEqual({
       toolCallId: 'tc-sub',
@@ -273,9 +284,149 @@ describe('planSessionReplay (synthetic journals, temp home)', () => {
       agentId: 'sub-1',
       parentToolCallId: null,
       subagentType: null,
+      parentAgentId: 'main',
+      swarmDepth: 0,
     });
     // The subagent's assistant text never becomes content.delta (live parity).
     expect(block.some((entry) => entry.event === 'content.delta')).toBe(false);
+  });
+
+  it('recovers persisted swarm provenance for lifecycle and subagent tool activity', async () => {
+    const sessionId = 'replay-swarm-provenance';
+    await writeState(sessionId, {
+      'swarm-child': {
+        type: 'sub',
+        parentAgentId: 'main',
+        swarmItem: 'Auth',
+        labels: { parentAgentId: 'main', swarmItem: 'Auth' },
+      },
+    });
+    await writeJournal(sessionId, 'main', [
+      { type: 'metadata', protocol_version: '1.5', created_at: T0 },
+      { type: 'turn.prompt', origin: { kind: 'user' }, time: T0 + 1 },
+      appendUser('review', T0 + 2),
+      loopEvent({ type: 'step.begin', uuid: 'swarm-step' }, T0 + 3),
+      loopEvent(
+        {
+          type: 'tool.call',
+          stepUuid: 'swarm-step',
+          toolCallId: 'swarm-call',
+          name: 'AgentSwarm',
+          args: {
+            description: 'Review modules',
+            prompt_template: 'Review {{item}}',
+            items: ['Auth', 'Docs'],
+          },
+        },
+        T0 + 4,
+      ),
+      loopEvent(
+        { type: 'tool.result', toolCallId: 'swarm-call', result: { output: 'done' } },
+        T0 + 5,
+      ),
+      loopEvent({ type: 'step.end', uuid: 'swarm-step' }, T0 + 6),
+      taskRecord(
+        'task.started',
+        {
+          taskId: 'swarm-task',
+          kind: 'agent',
+          status: 'running',
+          description: 'Auth',
+          agentId: 'swarm-child',
+          startedAt: T0 + 7,
+        },
+        T0 + 7,
+      ),
+      taskRecord(
+        'task.terminated',
+        {
+          taskId: 'swarm-task',
+          kind: 'agent',
+          status: 'completed',
+          description: 'Auth',
+          agentId: 'swarm-child',
+          startedAt: T0 + 7,
+          endedAt: T0 + 8,
+        },
+        T0 + 8,
+      ),
+      { type: 'turn.ended', turnId: 0, reason: 'completed', time: T0 + 9 },
+    ]);
+    await writeJournal(sessionId, 'swarm-child', subJournalRecords());
+
+    const events = await planSessionReplay(homeDir, WS, sessionId);
+    const spawned = events.find(
+      (event) =>
+        event.event === 'subagent.updated' &&
+        objectPayload(event.payload)['phase'] === 'spawned' &&
+        objectPayload(event.payload)['agentId'] === 'swarm-child',
+    );
+    expect(wire(spawned?.payload)).toMatchObject({
+      parentToolCallId: 'swarm-call',
+      parentAgentId: 'main',
+      swarmIndex: 0,
+      swarmDepth: 0,
+    });
+
+    const childTool = events.find(
+      (event) =>
+        event.event === 'tool.started' && objectPayload(event.payload)['toolCallId'] === 'tc-sub',
+    );
+    expect(wire(childTool?.payload)).toMatchObject({
+      agentId: 'swarm-child',
+      parentToolCallId: 'swarm-call',
+    });
+  });
+
+  it('replays exact Desktop provenance labels without guessing from item text', async () => {
+    const sessionId = 'replay-swarm-exact-labels';
+    await writeState(sessionId, {
+      main: { type: 'main' },
+      'exact-child': {
+        type: 'sub',
+        parentAgentId: 'main',
+        labels: {
+          parentAgentId: 'main',
+          parentToolCallId: 'persisted-swarm-call',
+          subagentType: 'reviewer',
+          swarmIndex: '3',
+          runInBackground: 'false',
+        },
+      },
+    });
+    await writeJournal(sessionId, 'main', [
+      { type: 'metadata', protocol_version: '1.5', created_at: T0 },
+      taskRecord(
+        'task.terminated',
+        {
+          taskId: 'exact-task',
+          kind: 'agent',
+          status: 'completed',
+          description: 'Exact child',
+          agentId: 'exact-child',
+          startedAt: T0 + 1,
+          endedAt: T0 + 2,
+        },
+        T0 + 2,
+      ),
+    ]);
+    await writeJournal(sessionId, 'exact-child', subJournalRecords());
+
+    const events = await planSessionReplay(homeDir, WS, sessionId);
+    const spawned = events.find(
+      (event) =>
+        event.event === 'subagent.updated' &&
+        objectPayload(event.payload)['phase'] === 'spawned' &&
+        objectPayload(event.payload)['agentId'] === 'exact-child',
+    );
+    expect(wire(spawned?.payload)).toMatchObject({
+      parentToolCallId: 'persisted-swarm-call',
+      subagentType: 'reviewer',
+      parentAgentId: 'main',
+      swarmIndex: 3,
+      swarmDepth: 0,
+      runInBackground: false,
+    });
   });
 
   it('matches the live bridge payload shape for content/tool/approval', async () => {
@@ -379,6 +530,50 @@ describe('planSessionReplay (synthetic journals, temp home)', () => {
     expect(wire(events[2]?.payload)).toEqual({ requestId: 'replay-main-t0' });
   });
 
+  it('replays the latest native Goal snapshot with the live payload shape', async () => {
+    await writeJournal('sess-goal', 'main', [
+      { type: 'metadata', protocol_version: '1.5', created_at: T0 },
+    ]);
+    await writeState('sess-goal', { main: { type: 'main' } });
+
+    const snapshot = {
+      goalId: 'goal-1',
+      objective: 'Ship Goal replay',
+      completionCriterion: 'The event is identical live and cold',
+      status: 'paused' as const,
+      turnsUsed: 2,
+      tokensUsed: 120,
+      wallClockMs: 5500,
+      budget: {
+        tokenBudget: 200,
+        turnBudget: 5,
+        wallClockBudgetMs: 10000,
+        remainingTokens: 80,
+        remainingTurns: 3,
+        remainingWallClockMs: 4500,
+        tokenBudgetReached: false,
+        turnBudgetReached: false,
+        wallClockBudgetReached: false,
+        overBudget: false,
+      },
+      terminalReason: 'Paused by user',
+    };
+    const events = await planSessionReplay(homeDir, WS, 'sess-goal', snapshot);
+    expect(events.map((entry) => entry.event)).toEqual(['goal.updated']);
+    expect(wire(events[0]?.payload)).toEqual({ snapshot });
+  });
+
+  it('replays an explicit null Goal snapshot after clear', async () => {
+    await writeJournal('sess-goal-clear', 'main', [
+      { type: 'metadata', protocol_version: '1.5', created_at: T0 },
+    ]);
+    await writeState('sess-goal-clear', { main: { type: 'main' } });
+
+    const events = await planSessionReplay(homeDir, WS, 'sess-goal-clear', null);
+    expect(events.map((entry) => entry.event)).toEqual(['goal.updated']);
+    expect(wire(events[0]?.payload)).toEqual({ snapshot: null });
+  });
+
   it('drops a torn final journal line', async () => {
     const dir = join(homeDir, 'sessions', WS, 'sess-torn', 'agents', 'main');
     await mkdir(dir, { recursive: true });
@@ -435,7 +630,7 @@ interface CollectedEvent {
   readonly seq: number;
 }
 
-function makeHandlerFixture() {
+function makeHandlerFixture(goalSnapshot: JsonValue | Error | null = null) {
   const events: CollectedEvent[] = [];
   const sequences = new Map<string, number>();
   const knownSessions = new Map<string, string>([[SESSION, WS], ['sess-empty', WS]]);
@@ -456,6 +651,14 @@ function makeHandlerFixture() {
         get: (id: unknown) => {
           if (id === ISessionIndex) return fakeIndex;
           if (id === IAppendLogStore) return { flush: () => Promise.resolve() };
+          if (id === ISessionLegacyService) {
+            return {
+              goal: () =>
+                goalSnapshot instanceof Error
+                  ? Promise.reject(goalSnapshot)
+                  : Promise.resolve(goalSnapshot),
+            };
+          }
           throw new Error('unexpected service access');
         },
       },
@@ -531,28 +734,79 @@ describe('session.replay handler', () => {
   it('emits the burst with continuing seqs and closes with counters', async () => {
     const fixture = makeHandlerFixture();
     const result = await fixture.call('session.replay', { sessionId: SESSION });
-    expect(fixture.events).toHaveLength(17);
+    expect(fixture.events).toHaveLength(18);
     expect(fixture.events[0]?.event).toBe('session.status');
     expect(fixture.events.at(-1)?.event).toBe('subagent.updated');
+    expect(fixture.events.find((entry) => entry.event === 'goal.updated')?.payload).toEqual({
+      snapshot: null,
+    });
     // Seqs are the server's natural continuation: consecutive from 1 here.
     expect(fixture.events.map((entry) => entry.seq)).toEqual(
-      Array.from({ length: 17 }, (_, i) => i + 1),
+      Array.from({ length: 18 }, (_, i) => i + 1),
     );
     expect(wire(result)).toEqual({
       sessionId: SESSION,
-      events: 17,
+      events: 18,
       fromSeq: 1,
-      toSeq: 17,
+      toSeq: 18,
       truncated: false,
     });
   });
 
+  it('reads the source engine Goal snapshot and appends it to the replay burst', async () => {
+    const snapshot = {
+      goalId: 'goal-live',
+      objective: 'Use the canonical source Goal service',
+      status: 'active',
+      turnsUsed: 1,
+      tokensUsed: 42,
+      wallClockMs: 900,
+      budget: {
+        tokenBudget: null,
+        turnBudget: null,
+        wallClockBudgetMs: null,
+        remainingTokens: null,
+        remainingTurns: null,
+        remainingWallClockMs: null,
+        tokenBudgetReached: false,
+        turnBudgetReached: false,
+        wallClockBudgetReached: false,
+        overBudget: false,
+      },
+    };
+    const fixture = makeHandlerFixture(snapshot);
+    await fixture.call('session.replay', { sessionId: SESSION });
+    expect(fixture.events.find((entry) => entry.event === 'goal.updated')?.payload).toEqual({
+      snapshot,
+    });
+  });
+
+  it('replays without goal.updated when the Goal read fails (best-effort degradation)', async () => {
+    const fixture = makeHandlerFixture(new Error('goal service unavailable'));
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const result = await fixture.call('session.replay', { sessionId: SESSION });
+      // The transcript burst replays intact; only the Goal event is dropped.
+      expect(fixture.events.find((entry) => entry.event === 'goal.updated')).toBeUndefined();
+      expect(wire(result)).toEqual({
+        sessionId: SESSION,
+        events: 17,
+        fromSeq: 1,
+        toSeq: 17,
+        truncated: false,
+      });
+      expect(spy).toHaveBeenCalledWith(expect.stringContaining('goal snapshot read failed'));
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('paginates with fromSeq/limit and reports truncated', async () => {
     const fixture = makeHandlerFixture();
-    // First burst: seqs 1..17 (fresh counter), toSeq is the client's cursor.
+    // First burst: seqs 1..18 (fresh counter), toSeq is the client's cursor.
     await fixture.call('session.replay', { sessionId: SESSION });
     // Incremental re-replay at the watermark: nothing newer, zero counters.
-    const caughtUp = await fixture.call('session.replay', { sessionId: SESSION, fromSeq: 17 });
+    const caughtUp = await fixture.call('session.replay', { sessionId: SESSION, fromSeq: 18 });
     expect(wire(caughtUp)).toEqual({
       sessionId: SESSION,
       events: 0,
@@ -561,7 +815,7 @@ describe('session.replay handler', () => {
       truncated: false,
     });
     // A window into the burst: positions 3..5 (0-based skip 2), emitted with
-    // fresh seqs continuing the session counter (18..20).
+    // fresh seqs continuing the session counter (19..21).
     fixture.events.length = 0;
     const page = await fixture.call('session.replay', { sessionId: SESSION, fromSeq: 2, limit: 3 });
     expect(fixture.events.map((entry) => entry.event)).toEqual([
@@ -572,25 +826,27 @@ describe('session.replay handler', () => {
     expect(wire(page)).toEqual({
       sessionId: SESSION,
       events: 3,
-      fromSeq: 18,
-      toSeq: 20,
+      fromSeq: 19,
+      toSeq: 21,
       truncated: true,
     });
   });
 
-  it('answers zero counters for empty history', async () => {
+  it('replays an explicit null Goal snapshot even with no transcript history', async () => {
     await writeJournal('sess-empty', 'main', [
       { type: 'metadata', protocol_version: '1.5', created_at: T0 },
     ]);
     await writeState('sess-empty', { main: { type: 'main' } });
     const fixture = makeHandlerFixture();
     const result = await fixture.call('session.replay', { sessionId: 'sess-empty' });
-    expect(fixture.events).toEqual([]);
+    expect(fixture.events).toMatchObject([
+      { sessionId: 'sess-empty', event: 'goal.updated', payload: { snapshot: null }, seq: 1 },
+    ]);
     expect(wire(result)).toEqual({
       sessionId: 'sess-empty',
-      events: 0,
-      fromSeq: 0,
-      toSeq: 0,
+      events: 1,
+      fromSeq: 1,
+      toSeq: 1,
       truncated: false,
     });
   });

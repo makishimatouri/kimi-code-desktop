@@ -68,6 +68,7 @@ import {
   ISessionActivityView,
   ISessionInteractionService,
   ISessionMcpHandle,
+  ISessionMetadata,
   ISessionSkillCatalog,
   MAIN_AGENT_ID,
   getLiveSessionById,
@@ -107,6 +108,12 @@ export interface TranslatedSessionEvent {
 export interface SubagentProvenance {
   readonly parentToolCallId?: string;
   readonly subagentType?: string;
+  readonly parentAgentId?: string;
+  /** Desktop-normalized, zero-based position within the owning AgentSwarm call. */
+  readonly swarmIndex?: number;
+  /** Global nesting depth: direct children of `main` are depth zero. */
+  readonly swarmDepth?: number;
+  readonly runInBackground?: boolean;
 }
 
 /**
@@ -192,6 +199,13 @@ export function translateDomainEvent(
             event.parentToolCallId.length === 0 ? null : event.parentToolCallId,
           subagentType: event.subagentName,
           description: event.description,
+          parentAgentId: ctx.provenance?.parentAgentId ?? event.parentAgentId ?? null,
+          swarmIndex:
+            ctx.provenance?.swarmIndex ?? normalizeEngineSwarmIndex(event.swarmIndex),
+          swarmDepth:
+            ctx.provenance?.swarmDepth ??
+            ((event.parentAgentId ?? ctx.agentId) === MAIN_AGENT_ID ? 0 : undefined),
+          runInBackground: ctx.provenance?.runInBackground ?? event.runInBackground,
         }),
       };
     case 'subagent.started':
@@ -205,6 +219,10 @@ export function translateDomainEvent(
           agentId: event.subagentId,
           parentToolCallId: ctx.provenance?.parentToolCallId ?? null,
           subagentType: ctx.provenance?.subagentType ?? null,
+          parentAgentId: ctx.provenance?.parentAgentId,
+          swarmIndex: ctx.provenance?.swarmIndex,
+          swarmDepth: ctx.provenance?.swarmDepth,
+          runInBackground: ctx.provenance?.runInBackground,
           resultSummary: event.type === 'subagent.completed' ? event.resultSummary : undefined,
           error: event.type === 'subagent.failed' ? event.error : undefined,
           reason: event.type === 'subagent.suspended' ? event.reason : undefined,
@@ -255,11 +273,20 @@ export function translateDomainEvent(
     case 'compaction.completed':
       if (!ctx.isMainAgent) return null;
       return { event: 'compaction.end', payload: asPayload({}) };
+    case 'goal.updated':
+      // Goals are main-agent state. Keep the engine's public snapshot/change
+      // payload intact at the runtime-v1 boundary; Rust projects it onto the
+      // existing Goal refresh wire signal and reads the canonical journal.
+      if (!ctx.isMainAgent) return null;
+      return {
+        event: 'goal.updated',
+        payload: asPayload({ snapshot: event.snapshot, change: event.change }),
+      };
     default:
       // turn.started / turn.step.completed / compaction.blocked /
       // compaction.cancelled / tool.progress / prompt.completed /
       // prompt.aborted / permission.approval.* / agent.activity.updated /
-      // shell.* / mcp.server.status / tool.list.updated / goal.* / skill.* /
+      // shell.* / mcp.server.status / tool.list.updated / skill.* /
       // context.* / error / warning … have no runtime-v1 counterpart.
       // (`compaction.blocked` marks a turn waiting on an in-flight
       // compaction, not a lifecycle edge; `compaction.cancelled` must not
@@ -267,6 +294,12 @@ export function translateDomainEvent(
       // while a cancelled compaction kept the engine's context.)
       return null;
   }
+}
+
+/** Kimi's AgentSwarm spec index is one-based; runtime-v1 uses zero-based UI indices. */
+function normalizeEngineSwarmIndex(value: number | undefined): number | undefined {
+  if (value === undefined || !Number.isFinite(value)) return undefined;
+  return Math.max(0, Math.trunc(value) - 1);
 }
 
 /**
@@ -650,11 +683,22 @@ class SessionEventBridge {
         this.handlePromptSteered(agent, event);
         return;
       case 'subagent.spawned':
-        this.subagentProvenance.set(event.subagentId, {
-          parentToolCallId:
-            event.parentToolCallId.length === 0 ? undefined : event.parentToolCallId,
-          subagentType: event.subagentName,
-        });
+        {
+          const parentAgentId = event.parentAgentId ?? agent.id;
+          const parent = this.subagentProvenance.get(parentAgentId);
+          const provenance: SubagentProvenance = {
+            parentToolCallId:
+              event.parentToolCallId.length === 0 ? undefined : event.parentToolCallId,
+            subagentType: event.subagentName,
+            parentAgentId,
+            swarmIndex: normalizeEngineSwarmIndex(event.swarmIndex),
+            swarmDepth:
+              parentAgentId === MAIN_AGENT_ID ? 0 : (parent?.swarmDepth ?? 0) + 1,
+            runInBackground: event.runInBackground,
+          };
+          this.subagentProvenance.set(event.subagentId, provenance);
+          this.persistSubagentProvenance(event.subagentId, provenance);
+        }
         break;
       default:
         break;
@@ -663,6 +707,67 @@ class SessionEventBridge {
     if (translated !== null) {
       this.emitSafe(translated.event, translated.payload);
     }
+  }
+
+  /**
+   * Preserve exact Desktop provenance in the engine's existing agent labels.
+   * This makes cold replay deterministic when separate AgentSwarm calls reuse
+   * the same item text; older sessions still use the journal-derived fallback.
+   *
+   * `ISessionMetadata.registerAgent` replaces the whole agent entry, so the
+   * read-modify-write must not lose concurrent engine writes (agent creation
+   * registers homedir/type/labels through the same service). The merge runs
+   * twice: the second pass re-reads the store and reconciles an entry an
+   * engine write landed after the first read; when nothing changed it is a
+   * no-op (`agentMetaEquals` short-circuits).
+   */
+  private persistSubagentProvenance(agentId: string, provenance: SubagentProvenance): void {
+    const metadata = this.session.accessor.get(ISessionMetadata);
+    void this
+      .mergeProvenanceInto(metadata, agentId, provenance)
+      .then(() => this.mergeProvenanceInto(metadata, agentId, provenance))
+      .catch((error: unknown) => {
+        // Best-effort durability write: a failed persistence must not break
+        // the live stream, which already carries the complete provenance —
+        // but a silent swallow would hide an engine metadata race at replay
+        // time, so surface it on the diagnostics channel.
+        console.error(
+          `[desktop-runtime] event-bridge: failed to persist subagent ${agentId} provenance labels: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      });
+  }
+
+  private async mergeProvenanceInto(
+    metadata: ISessionMetadata,
+    agentId: string,
+    provenance: SubagentProvenance,
+  ): Promise<void> {
+    const snapshot = await metadata.read();
+    if (this.disposed) return;
+    const existing = snapshot.agents?.[agentId] ?? { type: 'sub' as const };
+    const labels: Record<string, string> = { ...existing.labels };
+    if (provenance.parentAgentId !== undefined) {
+      labels['parentAgentId'] = provenance.parentAgentId;
+    }
+    if (provenance.parentToolCallId !== undefined) {
+      labels['parentToolCallId'] = provenance.parentToolCallId;
+    }
+    if (provenance.subagentType !== undefined) {
+      labels['subagentType'] = provenance.subagentType;
+    }
+    if (provenance.swarmIndex !== undefined) {
+      labels['swarmIndex'] = String(provenance.swarmIndex);
+    }
+    if (provenance.runInBackground !== undefined) {
+      labels['runInBackground'] = String(provenance.runInBackground);
+    }
+    await metadata.registerAgent(agentId, {
+      ...existing,
+      parentAgentId: existing.parentAgentId ?? provenance.parentAgentId,
+      labels,
+    });
   }
 
   /**
@@ -837,9 +942,15 @@ class SessionEventBridge {
 
   private emitSafe(event: SessionEventName, payload: JsonValue): void {
     if (this.disposed) return;
-    void this.emit(this.session.id, event, payload).catch(() => {
-      // Output teardown (closed after the shutdown drain) must not reach
-      // engine event callbacks.
+    void this.emit(this.session.id, event, payload).catch((error: unknown) => {
+      // The bridge is detached before the server closes its output, so a
+      // rejection here is a genuine drop (engine teardown race, sink
+      // failure) — log it instead of swallowing it silently.
+      console.error(
+        `[desktop-runtime] event-bridge: failed to emit ${event} for session ${this.session.id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     });
   }
 }

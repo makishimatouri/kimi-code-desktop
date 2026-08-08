@@ -7,9 +7,9 @@ import { DirectoryNotFoundError, useSessions } from "@/hooks/useSessions";
 import { getApiBaseUrl, hasPlatformModifier } from "@/hooks/utils";
 import type { SessionStatus, UploadSessionFileResponse } from "@/lib/api/models";
 import { clearBackgroundTasksSession } from "@/lib/background-tasks/sync";
+import { useDesktopUpdate } from "@/lib/check-updates";
 import { useDomTranslations, useI18n } from "@/lib/i18n";
 import { classifyIdleReason } from "@/lib/idle-turn";
-import { openKimiCodeWebsite } from "@/lib/kimi-code-link";
 import { shouldPauseForRuntimeReadiness } from "@/lib/runtime-readiness";
 import { useSessionStreamOrchestrator } from "@/lib/session-stream/provider";
 import {
@@ -29,7 +29,6 @@ import { AppSidebar } from "@/modules/sessions/app-sidebar";
 import { SettingsDialog, type SettingsTab } from "@/modules/settings/settings-dialog";
 import { type SessionModeDraft, shouldAutoApprove } from "@/modules/statusbar/permission-mode";
 import { Topbar } from "@/modules/topbar/topbar";
-import { useDesktopUpdate } from "@/modules/update/desktop-update";
 import { ChangesPanel, type WorkspaceTab } from "@/modules/workspace/changes-panel";
 import {
   deriveChanges,
@@ -545,7 +544,6 @@ export default function App() {
               setRuntimeCheckError(null);
               setHasAcknowledgedRuntime(true);
             }}
-            onOpenDownload={() => void openKimiCodeWebsite()}
             onOpenSettings={() => openSettings("config")}
           />
         )}

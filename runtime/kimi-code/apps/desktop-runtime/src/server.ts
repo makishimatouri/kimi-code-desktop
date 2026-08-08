@@ -45,7 +45,7 @@ export type RuntimeServerAdapter = RuntimeLifecycleAdapter & RuntimeEngineAdapte
  * (session-manager.ts `createForkSessionHandler`). The `fork` gate covers
  * whole-session forks only: a `turnIndex` param is permanently answered
  * `fork_turn_unsupported` until an engine with turn-granular fork lands.
- * `events` advertises the full SESSION_EVENT_NAMES set — 24 events emitted
+ * `events` advertises the full SESSION_EVENT_NAMES set — 25 events emitted
  * by the Node bridge plus `background_task.observed`, which the Rust
  * translate layer synthesizes from `tool.completed` (same side as the ACP
  * era), so the Desktop still receives every advertised event.

@@ -8,10 +8,11 @@
 //!   thinking / mode / future option ids) normalized from runtime
 //!   `session.config` events and persisted for replay.
 //!
-//! The in-memory store is the live source while a session is open;
-//! [`resolve_session_config`] falls back to the persisted session metadata so
-//! lazy-connect replay can emit a `ConfigOptionUpdate` snapshot without a
-//! running session.
+//! The in-memory store is the live source while a session is open; the host
+//! pump feeds it from runtime `session.config` events
+//! ([`set_session_config_from_response`]), and [`resolve_session_config`]
+//! falls back to the persisted session metadata so lazy-connect replay can
+//! emit a `ConfigOptionUpdate` snapshot without a running session.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -174,12 +175,27 @@ pub fn parse_session_config_from_response(
 ) -> SessionConfigState {
     let options_value = response
         .get("configOptions")
-        .or_else(|| response.get("config_options"));
+        .or_else(|| response.get("config_options"))
+        // runtime-v1 `session.config` events carry the option set directly.
+        .or_else(|| response.get("options"));
     match options_value.and_then(Value::as_array) {
         Some(items) if !items.is_empty() => SessionConfigState {
             session_id: session_id.to_string(),
             status: SessionConfigStatus::Known,
             options: items.iter().map(parse_session_config_option).collect(),
+        },
+        // runtime-v1 minimal `session.config` slice: `model` only (the engine
+        // reports status slices without the full option set).
+        _ if response.get("model").and_then(Value::as_str).is_some() => SessionConfigState {
+            session_id: session_id.to_string(),
+            status: SessionConfigStatus::Known,
+            options: vec![SessionConfigOption {
+                id: "model".to_string(),
+                option_type: "unknown".to_string(),
+                label: None,
+                current_value: response.get("model").cloned(),
+                options: None,
+            }],
         },
         _ => SessionConfigState::unknown(session_id),
     }
@@ -206,7 +222,8 @@ pub(crate) fn parse_session_config_option(raw: &Value) -> SessionConfigOption {
             .unwrap_or("unknown")
             .to_string(),
         option_type: raw
-            .get("type")
+            .get("optionType")
+            .or_else(|| raw.get("type"))
             .and_then(Value::as_str)
             .unwrap_or("unknown")
             .to_string(),
@@ -292,6 +309,41 @@ mod tests {
         let response = load_fixture("v0.30", "session_resume.result.json");
         let state = parse_session_config_from_response("sess-desktop-fixture-030", &response);
         assert_eq!(state.status, SessionConfigStatus::Unknown);
+    }
+
+    #[test]
+    fn runtime_v1_options_payload_parses_known_state() {
+        let payload = json!({
+            "options": [
+                { "id": "model", "optionType": "enum", "label": "Model",
+                  "currentValue": "kimi-k2", "options": [{ "value": "kimi-k2", "label": "K2" }] },
+                { "id": "thinking", "type": "enum", "currentValue": "high" },
+            ]
+        });
+        let state = parse_session_config_from_response("sess-runtime-v1", &payload);
+        assert_eq!(state.status, SessionConfigStatus::Known);
+        assert_eq!(state.options.len(), 2);
+        assert_eq!(
+            state.option_by_id("model").unwrap().option_type,
+            "enum",
+            "runtime-v1 records carry `optionType`"
+        );
+        assert_eq!(
+            state.option_by_id("thinking").unwrap().option_type,
+            "enum",
+            "ACP-style `type` records still parse"
+        );
+        assert_eq!(
+            state.option_by_id("model").unwrap().current_value,
+            Some(json!("kimi-k2"))
+        );
+    }
+
+    #[test]
+    fn runtime_v1_model_only_slice_synthesizes_model_option() {
+        let state = parse_session_config_from_response("sess-minimal", &json!({ "model": "kimi-k2" }));
+        assert_eq!(state.status, SessionConfigStatus::Known);
+        assert_eq!(state.option_by_id("model").unwrap().current_value, Some(json!("kimi-k2")));
     }
 
     #[test]

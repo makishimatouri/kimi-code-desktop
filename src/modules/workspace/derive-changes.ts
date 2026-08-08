@@ -1,5 +1,5 @@
 import type { LiveMessage } from "@/hooks/types";
-import type { GitDiffStats } from "@/lib/api/models";
+import type { GitDiffStats } from "@/lib/git-diff";
 import { type DiffDisplayData, findDiffDisplay } from "@/modules/conversation/diff-display";
 import { computeDiffLines } from "@/modules/conversation/diff-view";
 

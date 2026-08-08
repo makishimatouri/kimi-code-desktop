@@ -26,7 +26,7 @@
 | `SubagentLifecycle` | 子代理生命周期 | 与 SubagentEvent 不互相覆盖 |
 | `SteerInput` | turn 中插话 | busy 时队列语义不变 |
 | `PlanDisplay` | Plan 展示 | Plan 模式进出正确 |
-| `SlashCommandsUpdate` | 斜杠命令列表 | 见 `docs/SLASH_COMMAND_PARITY.md` |
+| `SlashCommandsUpdate` | 斜杠命令列表 | 见上游文档 `runtime/kimi-code/docs/zh/reference/slash-commands.md` |
 | `ConfigOptionUpdate` | 配置项变更 | Settings snapshot 刷新 |
 | `BackgroundTaskObserved` | 后台任务观察 | 不干扰主消息流 |
 

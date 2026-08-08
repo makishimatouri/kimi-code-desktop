@@ -219,8 +219,8 @@ fn is_in_temp_dir(path: &Path) -> bool {
 /// Resolve a user-supplied session-file path (absolute or workspace-relative)
 /// against the canonical session workspace root. Any path that escapes above
 /// the workspace root — lexically, canonically, or via a dangling symlink — is
-/// rejected. Moved here from `the pre-cutover ACP translation module` during the M4 cutover; the
-/// ACP copy stays until W3 deletes the ACP modules.
+/// rejected. Moved here from the ACP-era `acp_translate.rs` during the M4 cutover; the ACP
+/// modules were deleted in W3, so this is the only remaining copy.
 pub fn normalize_workspace_path(raw: &str, workspace: &Path) -> Result<PathBuf, String> {
     let workspace_root = std::fs::canonicalize(workspace).map_err(|err| {
         format!(
@@ -433,18 +433,16 @@ mod tests {
         assert!(err.contains("outside"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn normalize_workspace_path_rejects_symlink_escape() {
         let dir = TempDir::new().expect("tempdir");
         let outside = TempDir::new().expect("outside dir");
         std::fs::write(outside.path().join("secret.txt"), b"secret").expect("secret file");
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(outside.path(), dir.path().join("link")).expect("symlink");
-            let err = normalize_workspace_path("link/secret.txt", dir.path())
-                .expect_err("symlink escape must be rejected");
-            assert!(err.contains("outside"));
-        }
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("link")).expect("symlink");
+        let err = normalize_workspace_path("link/secret.txt", dir.path())
+            .expect_err("symlink escape must be rejected");
+        assert!(err.contains("outside"));
     }
 
     #[test]

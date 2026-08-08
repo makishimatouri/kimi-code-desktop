@@ -47,8 +47,8 @@ assert(
     libraryFrames[0]?.result?.capabilities?.usage === true &&
     libraryFrames[0]?.result?.capabilities?.fork === true &&
     libraryFrames[0]?.result?.capabilities?.methods?.length === 31 &&
-    libraryFrames[0]?.result?.capabilities?.events?.length === 25,
-  'dist library did not report all families wired (31 methods, 25 events)',
+    libraryFrames[0]?.result?.capabilities?.events?.length === 26,
+  'dist library did not report all families wired (31 methods, 26 events)',
 );
 assert(
   libraryFrames[1]?.type === 'event' &&
@@ -179,8 +179,8 @@ try {
       helloResult.capabilities?.usage === true &&
       helloResult.capabilities?.fork === true &&
       helloResult.capabilities?.methods?.length === 31 &&
-      helloResult.capabilities?.events?.length === 25,
-    'hello did not advertise all families wired (31 methods, 25 events)',
+      helloResult.capabilities?.events?.length === 26,
+    'hello did not advertise all families wired (31 methods, 26 events)',
   );
   const ready = await waitForEvent(
     (frame) =>
@@ -372,17 +372,18 @@ try {
     'sessions.list does not contain the forked session',
   );
 
-  // A session that never ran a turn replays as an empty burst (0/0 counters).
+  // A session that never ran a turn still replays the canonical null Goal
+  // snapshot so clients can clear stale state (one event, seq 1).
   const replayed = assertOk(
     await call('replay-1', 'session.replay', { sessionId: 'smoke-session-fork-1' }),
     'replay-1',
   );
   assert(
-    replayed.events === 0 &&
-      replayed.fromSeq === 0 &&
-      replayed.toSeq === 0 &&
+    replayed.events === 1 &&
+      replayed.fromSeq === 1 &&
+      replayed.toSeq === 1 &&
       replayed.truncated === false,
-    'session.replay on empty history did not answer zero counters',
+    'session.replay on empty history did not emit the null Goal snapshot',
   );
   const replayBadParams = await call('replay-bad', 'session.replay');
   assert(

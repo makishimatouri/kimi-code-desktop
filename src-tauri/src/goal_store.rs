@@ -5,32 +5,16 @@
 //! in the session wire journal, so desktop rebuilds snapshots from that same
 //! append-only source.
 
+use crate::runtime::now_ms;
 use crate::session_store;
 use serde_json::{json, Value};
 use std::fs;
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 static SESSION_GOAL_WIRE_WRITE_LOCK: Mutex<()> = Mutex::new(());
 const JOURNAL_ANCHOR_BYTES: u64 = 4096;
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
-}
-
-fn wire_jsonl_path(session_dir: &Path) -> Option<PathBuf> {
-    let legacy = session_dir.join("wire.jsonl");
-    if legacy.is_file() {
-        return Some(legacy);
-    }
-    let current = session_dir.join("agents").join("main").join("wire.jsonl");
-    current.is_file().then_some(current)
-}
 
 fn record_string<'a>(record: &'a Value, camel: &str, snake: &str) -> Option<&'a str> {
     record
@@ -416,7 +400,7 @@ pub struct GoalJournalCursor {
 impl GoalJournalCursor {
     pub fn open(session_id: &str) -> Result<Self, String> {
         let session_dir = session_store::find_session_dir_by_id_or_err(session_id)?;
-        let wire_file = wire_jsonl_path(&session_dir)
+        let wire_file = session_store::wire_jsonl_path(&session_dir)
             .unwrap_or_else(|| session_dir.join("agents").join("main").join("wire.jsonl"));
         Self::open_path(wire_file)
     }
@@ -750,7 +734,7 @@ pub fn session_goal_snapshot(session_id: &str) -> Result<Option<Value>, String> 
     let Some(session_dir) = session_store::find_session_dir_by_id(session_id)? else {
         return Ok(None);
     };
-    let Some(wire_file) = wire_jsonl_path(&session_dir) else {
+    let Some(wire_file) = session_store::wire_jsonl_path(&session_dir) else {
         return Ok(None);
     };
     GoalJournalCursor::open_path(wire_file).map(|cursor| cursor.snapshot())
@@ -758,7 +742,7 @@ pub fn session_goal_snapshot(session_id: &str) -> Result<Option<Value>, String> 
 
 fn append_record(session_id: &str, record: &Value) -> Result<(), String> {
     let session_dir = session_store::find_session_dir_by_id_or_err(session_id)?;
-    let wire_file = wire_jsonl_path(&session_dir)
+    let wire_file = session_store::wire_jsonl_path(&session_dir)
         .unwrap_or_else(|| session_dir.join("agents").join("main").join("wire.jsonl"));
     let parent = wire_file
         .parent()

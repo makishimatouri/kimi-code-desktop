@@ -1,15 +1,16 @@
-//! Single runtime child-process supervisor (M2 skeleton).
-//!
-//! Owns the lifecycle of one source-built runtime child: spawn, the
-//! request/response pending table, handshake and shutdown orchestration, and
-//! fail-closed fault handling. The pump threads and routing plumbing live in
-//! `pump.rs`. Threading follows the existing desktop pattern (`std::process`
-//! + pump threads, as in `acp.rs`); no new crates.
+//! Single runtime child-process supervisor: spawn, the request/response
+//! pending table, handshake and shutdown orchestration, and fail-closed
+//! fault handling. The pump threads and routing plumbing live in `pump.rs`;
+//! production orchestration over this supervisor lives in `host.rs`
+//! (`RuntimeHost`) with spawn resolution in `host/spawn.rs` (`node
+//! dist/main.mjs` in dev, the SEA sidecar in release). Threading is plain
+//! `std::process` + pump threads; no new crates.
 //!
 //! Fail closed: a protocol fault, an unexpected exit, or a duplicate/unknown
 //! response id kills the child, moves the supervisor to `Failed`, settles
 //! every pending request with the fault, and keeps the stderr ring for the
-//! crash report. Not wired to Tauri commands yet (M4); consumed by tests only.
+//! crash report. The runtime is the source-built Node child; there is no
+//! fallback to an installed CLI.
 
 use super::codec::encode_request;
 use super::protocol::{
@@ -95,8 +96,9 @@ impl fmt::Display for RuntimeError {
 
 impl std::error::Error for RuntimeError {}
 
-/// How to spawn the runtime child. Tests inject the fixture worker path; the
-/// production dist-path resolution lands with the M4 config surface.
+/// How to spawn the runtime child. Production resolution lives in
+/// `host/spawn.rs` (`resolve_spawn_config`); tests inject the fixture worker
+/// path directly.
 #[derive(Debug, Clone)]
 pub struct SpawnConfig {
     pub program: String,
@@ -151,8 +153,11 @@ impl Default for ShutdownConfig {
     }
 }
 
-/// State shared with the pump threads. Locking rule: acquire each mutex in
-/// its own scope; never hold two different mutexes across a blocking call.
+/// State shared with the pump threads. Locking rule: never hold two
+/// different mutexes across a blocking call; brief nested acquisition (e.g.
+/// `pending` + `settled` in [`Shared::settle_timeout`]) is allowed only to
+/// make a removal and its settlement atomic — no other path acquires
+/// `settled` while holding `pending`, so there is no lock-order deadlock.
 pub(crate) struct Shared {
     pub(crate) state: Mutex<SupervisorState>,
     /// First fault wins; set exactly once on the transition to `Failed`.
@@ -171,8 +176,24 @@ pub(crate) struct Shared {
     pub(crate) options: SupervisorOptions,
 }
 
-/// Supervisor for one runtime child. Public methods are synchronous; Tauri
-/// commands (M4) will call them from blocking contexts.
+impl Shared {
+    /// Atomically settle a timed-out request: remove its pending entry and
+    /// record the id as `TimedOut` in one critical section. Without the
+    /// single section, a pump routing the late response between two separate
+    /// acquisitions would see an id that is neither pending nor settled and
+    /// classify it `UnknownResponseId` — a protocol fault that fails a
+    /// healthy runtime closed. Takes `pending` first; no other path acquires
+    /// `settled` while holding `pending`, so the nested acquisition cannot
+    /// deadlock.
+    pub(crate) fn settle_timeout(&self, id: &str) {
+        let mut pending = lock(&self.pending);
+        pending.remove(id);
+        lock(&self.settled).record(id.to_string(), SettledKind::TimedOut);
+    }
+}
+
+/// Supervisor for one runtime child. Public methods are synchronous and run
+/// in blocking contexts (the Tauri command layer and `RuntimeHost`).
 pub struct RuntimeSupervisor {
     shared: Arc<Shared>,
     config: SpawnConfig,
@@ -379,8 +400,11 @@ impl RuntimeSupervisor {
         match rx.recv_timeout(timeout) {
             Ok(outcome) => outcome,
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                lock(&self.shared.pending).remove(&id);
-                lock(&self.shared.settled).record(id, SettledKind::TimedOut);
+                // One atomic transition (see `Shared::settle_timeout`): a
+                // late response routed between two separate lock
+                // acquisitions would see an id that is neither pending nor
+                // settled and fail a healthy runtime closed as unknown.
+                self.shared.settle_timeout(&id);
                 Err(RuntimeError::Timeout("runtime request timed out"))
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => Err(RuntimeError::Io(

@@ -63,7 +63,7 @@ pnpm --filter @moonshot-ai/desktop-runtime run smoke   # needs a build first
 
 All M3 runtime-v1 methods have real handlers and the capability snapshot
 reports every family wired (`sessions` / `turns` / `config` / `replay` /
-`auth` / `usage` / `fork` = true, `events` = the full 25-name
+`auth` / `usage` / `fork` = true, `events` = the full 26-name
 `SESSION_EVENT_NAMES` set):
 
 - **replay** — `session.replay` re-emits persisted history as ordinary

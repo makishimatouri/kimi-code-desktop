@@ -208,6 +208,7 @@ export const BASE_SESSION_EVENT_NAMES = [
   'tool.updated',
   'tool.completed',
   'plan.updated',
+  'goal.updated',
   'usage.updated',
   'task.updated',
   'subagent.updated',

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { useAgentMonitorStore } from "../lib/agent-monitor/store";
 import type {
 	Session,
 	SessionStatus,
@@ -597,6 +598,9 @@ export function useSessions(
 					});
 				}
 
+				// The session is gone; drop its agent-monitor tasks too.
+				useAgentMonitorStore.getState().clearSession(sessionId);
+
 				// Update sessions list
 				let nextSelectedId: string | undefined;
 				setSessions((current) => {
@@ -630,6 +634,12 @@ export function useSessions(
 	const selectSession = useCallback(
 		(sessionId: string) => {
 			console.log("[useSessions] Selecting session:", sessionId);
+			// Leaving a session makes its agent-monitor tasks stale (the old
+			// stream is disconnected); drop them so the task table does not
+			// accumulate rows across sessions. Replay rebuilds on re-entry.
+			if (selectedSessionId && sessionId !== selectedSessionId) {
+				useAgentMonitorStore.getState().clearSession(selectedSessionId);
+			}
 			setSelectedSessionId(sessionId);
 			if (!sessionId) {
 				return;
@@ -638,7 +648,7 @@ export function useSessions(
 				refreshSession(sessionId);
 			}
 		},
-		[refreshSession, sessions],
+		[refreshSession, selectedSessionId, sessions],
 	);
 
 	/**
@@ -1169,6 +1179,9 @@ export function useSessions(
 					.map((result) => result.value);
 				successCount = successfulIds.length;
 				if (successfulIds.length > 0) {
+					for (const id of successfulIds) {
+						useAgentMonitorStore.getState().clearSession(id);
+					}
 					setSessions((current) => {
 						const next = current.filter(
 							(s) => !successfulIds.includes(s.sessionId),
@@ -1211,6 +1224,9 @@ export function useSessions(
 			}
 
 			if (successfulIds.length > 0) {
+				for (const id of successfulIds) {
+					useAgentMonitorStore.getState().clearSession(id);
+				}
 				setSessions((current) => {
 					const next = current.filter(
 						(s) => !successfulIds.includes(s.sessionId),

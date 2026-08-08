@@ -17,7 +17,6 @@ import * as runtime from '../runtime';
 import type {
   ConfigToml,
   GlobalConfig,
-  HTTPValidationError,
   UpdateConfigTomlRequest,
   UpdateConfigTomlResponse,
   UpdateGlobalConfigRequest,
@@ -28,8 +27,6 @@ import {
     ConfigTomlToJSON,
     GlobalConfigFromJSON,
     GlobalConfigToJSON,
-    HTTPValidationErrorFromJSON,
-    HTTPValidationErrorToJSON,
     UpdateConfigTomlRequestFromJSON,
     UpdateConfigTomlRequestToJSON,
     UpdateConfigTomlResponseFromJSON,

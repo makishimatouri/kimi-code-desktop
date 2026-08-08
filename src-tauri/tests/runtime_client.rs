@@ -166,6 +166,38 @@ fn never_respond_times_out_without_faulting() {
 }
 
 #[test]
+fn late_response_after_timeout_is_dropped_without_faulting() {
+    if !node_or_skip("late_response_after_timeout") {
+        return;
+    }
+    let supervisor = started_supervisor();
+    let client = RuntimeClient::new(&supervisor);
+
+    // The fixture answers after the caller's deadline; the late response
+    // must be classified TimedOut and dropped, not UnknownResponseId —
+    // which would fail a healthy runtime closed.
+    let err = client
+        .call("fixture.slowRespond", json!({"delayMs": 400}), SHORT_TIMEOUT)
+        .expect_err("slowRespond must time out");
+    assert!(
+        matches!(err, RuntimeError::Timeout(_)),
+        "expected timeout, got {err:?}"
+    );
+    // Give the fixture's late response time to arrive and be routed.
+    std::thread::sleep(Duration::from_millis(600));
+    assert_eq!(supervisor.state(), SupervisorState::Ready);
+    assert_eq!(supervisor.fault(), None);
+    let info = client
+        .get_info(CALL_TIMEOUT)
+        .expect("getInfo after late response");
+    assert_eq!(info.selected_protocol, RUNTIME_PROTOCOL);
+
+    supervisor
+        .shutdown(&ShutdownConfig::default())
+        .expect("shutdown");
+}
+
+#[test]
 fn unknown_method_is_rejected_with_error_body() {
     if !node_or_skip("unknown_method") {
         return;
@@ -211,6 +243,7 @@ fn typed_session_scoped_call_reaches_wire_without_faulting() {
                 session_id: "s-1".into(),
                 request_id: "r-1".into(),
                 input: PromptInput::Text("hello".into()),
+                visible_input: None,
                 model: None,
                 plan_mode: None,
             },
@@ -316,6 +349,7 @@ fn turn_start_params_shape() {
         session_id: "s-1".into(),
         request_id: "r-1".into(),
         input: PromptInput::Text("go".into()),
+        visible_input: Some(PromptInput::Text("visible go".into())),
         model: None,
         plan_mode: Some(true),
     };
@@ -416,7 +450,10 @@ fn turn_and_shutdown_results_deserialize() {
     let result: TurnStartResult =
         serde_json::from_value(json!({"requestId": "r-1", "turnId": 7})).unwrap();
     assert_eq!(result.request_id, "r-1");
-    assert_eq!(result.turn_id, 7.0);
+    assert_eq!(result.turn_id, Some(7.0));
+    let local: TurnStartResult =
+        serde_json::from_value(json!({"requestId": "r-local", "turnId": null})).unwrap();
+    assert_eq!(local.turn_id, None);
     let result: ShutdownResult = serde_json::from_value(json!({"shuttingDown": true})).unwrap();
     assert!(result.shutting_down);
 }

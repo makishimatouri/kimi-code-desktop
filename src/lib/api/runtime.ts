@@ -278,13 +278,6 @@ export class RequiredError extends Error {
     }
 }
 
-export const COLLECTION_FORMATS = {
-    csv: ",",
-    ssv: " ",
-    tsv: "\t",
-    pipes: "|",
-};
-
 export type FetchAPI = WindowOrWorkerGlobalScope['fetch'];
 
 export type Json = any;
@@ -335,19 +328,6 @@ function querystringSingleKey(key: string, value: string | number | null | undef
         return querystring(value as HTTPQuery, fullKey);
     }
     return `${encodeURIComponent(fullKey)}=${encodeURIComponent(String(value))}`;
-}
-
-export function exists(json: any, key: string) {
-    const value = json[key];
-    return value !== null && value !== undefined;
-}
-
-export function mapValues(data: any, fn: (item: any) => any) {
-    const result: { [key: string]: any } = {};
-    for (const key of Object.keys(data)) {
-        result[key] = fn(data[key]);
-    }
-    return result;
 }
 
 export function canConsumeForm(consumes: Consume[]): boolean {
@@ -405,22 +385,6 @@ export class JSONApiResponse<T> {
     async value(): Promise<T> {
         return this.transformer(await this.raw.json());
     }
-}
-
-export class VoidApiResponse {
-    constructor(public raw: Response) {}
-
-    async value(): Promise<void> {
-        return undefined;
-    }
-}
-
-export class BlobApiResponse {
-    constructor(public raw: Response) {}
-
-    async value(): Promise<Blob> {
-        return await this.raw.blob();
-    };
 }
 
 export class TextApiResponse {

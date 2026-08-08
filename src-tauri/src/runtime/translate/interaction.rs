@@ -26,7 +26,8 @@ pub(super) fn translate_approval_requested(payload: &Value) -> Vec<String> {
         "description": description,
         // Wire field kept from the ACP shape; identifies the emitting backend.
         "sender": "runtime",
-        "tool_call_id": string_for_keys(payload, &["toolCallId", "tool_call_id"]).unwrap_or_default(),
+        // Null when the engine omits the id; the frontend must not match on it.
+        "tool_call_id": string_for_keys(payload, &["toolCallId", "tool_call_id"]),
         // The engine has no ACP tool kind; the bridge always sends null.
         "kind": cloned_for_keys(payload, &["kind"]),
         "display": payload.get("display").and_then(Value::as_array).cloned().unwrap_or_default(),
@@ -54,7 +55,8 @@ pub(super) fn translate_question_requested(payload: &Value) -> Vec<String> {
         "QuestionRequest",
         json!({
             "id": question_id,
-            "tool_call_id": string_for_keys(payload, &["toolCallId", "tool_call_id"]).unwrap_or_default(),
+            // Null when the engine omits the id; the frontend must not match on it.
+            "tool_call_id": string_for_keys(payload, &["toolCallId", "tool_call_id"]),
             "questions": questions,
         }),
         json!(question_id),

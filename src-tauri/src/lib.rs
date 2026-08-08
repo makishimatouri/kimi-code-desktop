@@ -3,7 +3,6 @@ pub mod git_diff;
 pub mod global_config;
 pub mod goal_queue;
 pub mod goal_store;
-pub mod mcp_config;
 pub mod native_menu;
 pub mod notify;
 pub mod provider_config;

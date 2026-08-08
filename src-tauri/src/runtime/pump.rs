@@ -321,6 +321,44 @@ mod tests {
     }
 
     #[test]
+    fn settle_timeout_makes_late_response_dropped_not_unknown() {
+        // The timeout transition (`Shared::settle_timeout`) removes the
+        // pending entry and records the id as TimedOut in one critical
+        // section. Once it returns, the id is no longer pending and is
+        // already settled — no instant exists where the pump could see an
+        // id that is neither (the UnknownResponseId window that would fail
+        // a healthy runtime closed).
+        let shared = bare_shared();
+        let (tx, rx) = mpsc::channel();
+        lock(&shared.pending).insert("req-1".to_string(), tx);
+
+        shared.settle_timeout("req-1");
+        assert!(lock(&shared.pending).is_empty());
+        assert_eq!(
+            lock(&shared.settled).kind("req-1"),
+            Some(SettledKind::TimedOut)
+        );
+
+        // The late response routed afterwards is dropped quietly, never
+        // classified UnknownResponseId, and never delivered to the
+        // timed-out caller.
+        let result = route_response(
+            &shared,
+            ResponseFrame::Ok {
+                id: "req-1".to_string(),
+                result: Value::Null,
+            },
+        );
+        assert!(result.is_ok(), "late response must be dropped, got {result:?}");
+        assert_eq!(*lock(&shared.state), SupervisorState::Ready);
+        assert_eq!(*lock(&shared.fault), None);
+        assert!(
+            rx.recv_timeout(Duration::from_millis(10)).is_err(),
+            "timed-out caller must not receive the late outcome"
+        );
+    }
+
+    #[test]
     fn fail_closed_settles_pending_and_is_idempotent() {
         let shared = bare_shared();
         let (tx, rx) = mpsc::channel();

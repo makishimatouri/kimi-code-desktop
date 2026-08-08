@@ -1,7 +1,7 @@
 //! Desktop-semantic host over the source runtime (M4 wave 0).
 //!
-//! `RuntimeHost` is the Tauri-managed singleton that turns the pure process
-//! lifecycle of [`RuntimeSupervisor`] into desktop semantics:
+//! `RuntimeHost` is the production Tauri-managed singleton that turns the
+//! pure process lifecycle of [`RuntimeSupervisor`] into desktop semantics:
 //!
 //! - **spawn resolution** (`host/spawn.rs`): dev default is the source-tree
 //!   dist entry `runtime/kimi-code/apps/desktop-runtime/dist/main.mjs`
@@ -22,30 +22,35 @@
 //!   `connect_leased` / `disconnect_leased`), in-flight turn ids, pending
 //!   approval/question tables, and the `session.config` snapshot cache.
 //!
-//! Wave 0 only registers the host as Tauri state; the ACP managers stay
-//! managed and the production command rewiring lands in W1.
+//! Session table / leases and the wire emit path are the same in every wave;
+//! `lib.rs` manages the host as Tauri state and every command family runs
+//! through it (the M4 cutover replaced the ACP managers and the external-CLI
+//! adapters).
 
 mod event_pump;
+mod lifecycle;
 mod session;
 mod spawn;
 
 use self::session::{
-    lease_allows_disconnect, lock, now_ms, post_control, slot_serves_connect, turn_failed_payload,
+    lease_allows_disconnect, lock, post_control, slot_serves_connect, turn_failed_payload,
     ControlMessage, HostShared, SessionStatusProjection,
 };
-use self::spawn::{resolve_spawn_config, validate_node_version};
+pub(crate) use self::spawn::resolve_spawn_config;
+use self::spawn::validate_node_version;
 use super::client::{
     ApprovalDecision, ApprovalRespondParams, QuestionRespondParams, RuntimeClient,
     TurnCancelParams, TurnStartParams, TurnStartResult,
 };
+use super::now_ms;
 use super::protocol::{HelloParams, RuntimeInfo};
 use super::readiness;
 use super::supervisor::{HandshakeConfig, RuntimeSupervisor, ShutdownConfig, SupervisorState};
 use super::translate::{synthesize_approval_resolved, synthesize_turn_begin, WireTranslator};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 use tauri::AppHandle;
@@ -152,6 +157,10 @@ pub struct RuntimeHost {
     shared: Arc<HostShared>,
     generation: Mutex<Option<RuntimeGeneration>>,
     runtime_info: Mutex<Option<RuntimeInfo>>,
+    /// Concurrent turns may start under read access; a Runtime reload takes
+    /// write access before checking the session table and keeps it through
+    /// file replacement, shutdown, and rebuild.
+    turn_start_gate: RwLock<()>,
 }
 
 impl Default for RuntimeHost {
@@ -164,8 +173,13 @@ impl RuntimeHost {
     /// Production host: wire lines are emitted as Tauri `wire:message` events
     /// once `install_app` delivers the handle.
     pub fn new() -> Self {
-        let data_root =
-            crate::runtime_check::kimi_code_home_dir().unwrap_or_else(|_| std::env::temp_dir());
+        let data_root = crate::runtime_check::kimi_code_home_dir().unwrap_or_else(|err| {
+            eprintln!(
+                "[runtime] failed to resolve the Kimi Code home directory, \
+                 falling back to the temp dir: {err}"
+            );
+            std::env::temp_dir()
+        });
         Self::with_parts(Sink::App(AppEventSink::default()), data_root)
     }
 
@@ -190,6 +204,7 @@ impl RuntimeHost {
             }),
             generation: Mutex::new(None),
             runtime_info: Mutex::new(None),
+            turn_start_gate: RwLock::new(()),
         }
     }
 
@@ -314,6 +329,10 @@ impl RuntimeHost {
         slot.generation = generation_id;
         slot.connection_id = Some(connection_id.to_string());
         slot.status = SessionStatusProjection::connected(now_ms());
+        // Pending approvals/questions predate this open (stale generation or
+        // observed-only slot): the fresh runtime re-requests what is pending.
+        slot.pending_approvals.clear();
+        slot.pending_questions.clear();
         Ok(())
     }
 
@@ -341,6 +360,16 @@ impl RuntimeHost {
                 eprintln!("[runtime] session.close for `{session_id}` during disconnect: {err}");
             }
         }
+        self.forget_session(session_id);
+        Ok(())
+    }
+
+    /// Drop the host session slot and translator state for a session that no
+    /// longer exists. Shared by `disconnect_leased` and the `delete_session`
+    /// command: a removed session must not keep an `open` slot, which would
+    /// make the next `wire_connect` with the same id short-circuit
+    /// `session.open` and fail the following `turn.start`.
+    pub fn forget_session(&self, session_id: &str) {
         lock(&self.shared.sessions).remove(session_id);
         post_control(
             &self.shared,
@@ -348,7 +377,6 @@ impl RuntimeHost {
                 session_id: session_id.to_string(),
             },
         );
-        Ok(())
     }
 
     /// Start a turn. Registers the desktop-minted request id (busy check per
@@ -357,6 +385,7 @@ impl RuntimeHost {
     /// sequence when the runtime rejects the start (no terminal event exists
     /// for a turn that never began).
     pub fn start_turn(&self, params: TurnStartParams) -> Result<TurnStartResult, String> {
+        let _turn_start_guard = self.turn_start_guard();
         let session_id = params.session_id.clone();
         let request_id = params.request_id.clone();
         let supervisor = self.ensure_session_live(&session_id)?;
@@ -372,7 +401,8 @@ impl RuntimeHost {
             }
             slot.in_flight.insert(request_id.clone());
         }
-        let user_input = serde_json::to_value(&params.input)
+        let visible_input = params.visible_input.as_ref().unwrap_or(&params.input);
+        let user_input = serde_json::to_value(visible_input)
             .map_err(|err| format!("turn input not serializable: {err}"))?;
         post_control(
             &self.shared,
@@ -409,6 +439,7 @@ impl RuntimeHost {
         session_id: &str,
         request_id: Option<&str>,
     ) -> Result<Vec<String>, String> {
+        let _turn_start_guard = self.turn_start_guard();
         let supervisor = self.ensure_session_live(session_id)?;
         let targets: Vec<String> = {
             let sessions = lock(&self.shared.sessions);
@@ -454,19 +485,27 @@ impl RuntimeHost {
     /// (runtime-v1 has no resolution event). A stale/duplicate approval id is
     /// tolerated as a no-op, matching acp `handle_permission_response`.
     pub fn respond_approval(&self, params: ApprovalRespondParams) -> Result<(), String> {
+        let _turn_start_guard = self.turn_start_guard();
         let session_id = params.session_id.clone();
         let approval_id = params.approval_id.clone();
-        let supervisor = self.ensure_session_live(&session_id)?;
+        let op = self.session_op_lock(&session_id);
+        let _op_guard = lock(&op);
+        let supervisor = self.ensure_session_live_unlocked(&session_id)?;
         let known = lock(&self.shared.sessions)
-            .get_mut(&session_id)
-            .is_some_and(|slot| slot.pending_approvals.remove(&approval_id));
+            .get(&session_id)
+            .is_some_and(|slot| slot.pending_approvals.contains(&approval_id));
         if !known {
             return Ok(());
         }
         let client = RuntimeClient::new(&supervisor);
-        client
-            .approval_respond(&params, CALL_TIMEOUT)
-            .map_err(|err| format!("runtime approval.respond failed: {err}"))?;
+        if let Err(err) = client.approval_respond(&params, CALL_TIMEOUT) {
+            return Err(format!("runtime approval.respond failed: {err}"));
+        }
+        // Remove only after the runtime accepted the response: a failed call
+        // must keep the entry so the next attempt is not a silent no-op.
+        if let Some(slot) = lock(&self.shared.sessions).get_mut(&session_id) {
+            slot.pending_approvals.remove(&approval_id);
+        }
         let decision = match params.decision {
             ApprovalDecision::Approved => "approved",
             ApprovalDecision::Rejected => "rejected",
@@ -486,21 +525,29 @@ impl RuntimeHost {
     /// an error — the acp desktop hangs the turn otherwise
     /// (`handle_permission_response` question branch).
     pub fn respond_question(&self, params: QuestionRespondParams) -> Result<(), String> {
+        let _turn_start_guard = self.turn_start_guard();
         let session_id = params.session_id.clone();
         let question_id = params.question_id.clone();
-        let supervisor = self.ensure_session_live(&session_id)?;
+        let op = self.session_op_lock(&session_id);
+        let _op_guard = lock(&op);
+        let supervisor = self.ensure_session_live_unlocked(&session_id)?;
         let known = lock(&self.shared.sessions)
-            .get_mut(&session_id)
-            .is_some_and(|slot| slot.pending_questions.remove(&question_id));
+            .get(&session_id)
+            .is_some_and(|slot| slot.pending_questions.contains(&question_id));
         if !known {
             return Err(format!(
                 "No pending runtime request for question response id `{question_id}`"
             ));
         }
         let client = RuntimeClient::new(&supervisor);
-        client
-            .question_respond(&params, CALL_TIMEOUT)
-            .map_err(|err| format!("runtime question.respond failed: {err}"))?;
+        if let Err(err) = client.question_respond(&params, CALL_TIMEOUT) {
+            return Err(format!("runtime question.respond failed: {err}"));
+        }
+        // Remove only after the runtime accepted the response: a failed call
+        // must keep the entry for retry instead of hanging the next response.
+        if let Some(slot) = lock(&self.shared.sessions).get_mut(&session_id) {
+            slot.pending_questions.remove(&question_id);
+        }
         Ok(())
     }
 
@@ -510,6 +557,16 @@ impl RuntimeHost {
     fn ensure_session_live(&self, session_id: &str) -> Result<Arc<RuntimeSupervisor>, String> {
         let op = self.session_op_lock(session_id);
         let _op_guard = lock(&op);
+        self.ensure_session_live_unlocked(session_id)
+    }
+
+    /// Lock-free body of `ensure_session_live`, for callers that already hold
+    /// the per-session op lock (the respond paths serialize their runtime
+    /// call and the pending-table mutation with it).
+    fn ensure_session_live_unlocked(
+        &self,
+        session_id: &str,
+    ) -> Result<Arc<RuntimeSupervisor>, String> {
         let supervisor = self.ensure_started()?;
         let generation_id = self.current_generation_id()?;
         let needs_reopen = {
@@ -532,6 +589,10 @@ impl RuntimeHost {
             if let Some(slot) = lock(&self.shared.sessions).get_mut(session_id) {
                 slot.generation = generation_id;
                 slot.status = SessionStatusProjection::connected(now_ms());
+                // Pending approvals/questions belong to the dead generation:
+                // the rebuilt runtime re-requests what is still pending.
+                slot.pending_approvals.clear();
+                slot.pending_questions.clear();
             }
         }
         Ok(supervisor)
@@ -553,22 +614,99 @@ impl RuntimeHost {
     }
 
     fn handshake_config(&self) -> HandshakeConfig {
-        HandshakeConfig {
-            hello: HelloParams::new(
-                env!("CARGO_PKG_VERSION"),
-                self.shared.data_root.to_string_lossy(),
-                std::env::consts::OS,
-                std::env::consts::ARCH,
-                "en-US",
-            ),
-            expected_commit: Some(EXPECTED_KIMI_COMMIT.to_string()),
-            timeout: HANDSHAKE_TIMEOUT,
-        }
+        build_handshake_config(&self.shared.data_root, HANDSHAKE_TIMEOUT)
+    }
+}
+
+/// Handshake inputs shared by the managed host and the readiness probe: the
+/// pinned commit gate plus the caller's data root, so the probe can talk to a
+/// throwaway root while the host uses the production one.
+pub(crate) fn build_handshake_config(data_root: &Path, timeout: Duration) -> HandshakeConfig {
+    HandshakeConfig {
+        hello: HelloParams::new(
+            env!("CARGO_PKG_VERSION"),
+            data_root.to_string_lossy(),
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            "en-US",
+        ),
+        expected_commit: Some(EXPECTED_KIMI_COMMIT.to_string()),
+        timeout,
     }
 }
 
 impl Drop for RuntimeHost {
     fn drop(&mut self) {
         self.shutdown();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::host::session::SessionSlot;
+    use crate::test_env::lock::set_env_var;
+    use std::process::{Command, Stdio};
+
+    struct NoopSink;
+
+    impl WireSink for NoopSink {
+        fn emit(&self, _session_id: &str, _message: String) {}
+    }
+
+    fn node_on_path() -> bool {
+        Command::new("node")
+            .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+
+    fn fixture_entry() -> String {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("runtime-fixture-worker.mjs")
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    #[test]
+    fn forget_session_removes_slot_so_reconnect_executes_session_open() {
+        if !node_on_path() {
+            eprintln!("skipping forget_session reconnect: `node` was not found on PATH");
+            return;
+        }
+        let _entry = set_env_var("KIMI_RUNTIME_ENTRY", &fixture_entry());
+        let host = RuntimeHost::with_sink(Arc::new(NoopSink));
+        host.ensure_started().expect("start fixture runtime");
+        let generation = host.current_generation_id().expect("generation id");
+        // An open, current-generation slot, as if the session was live before
+        // the delete.
+        lock(&host.shared.sessions).insert(
+            "s1".to_string(),
+            SessionSlot {
+                open: true,
+                generation,
+                connection_id: Some("conn-old".to_string()),
+                ..SessionSlot::default()
+            },
+        );
+        // Pre-delete: the stale slot serves a reconnect without session.open.
+        host.connect_leased("s1", "conn-1")
+            .expect("served by the open slot");
+        // Delete path: `delete_session` -> `forget_session` drops the slot.
+        host.forget_session("s1");
+        assert!(!host.is_session_open("s1"), "slot removed after forget");
+        assert!(host.session_status("s1").is_none(), "slot gone");
+        // Post-delete: the same id re-connects through session.open; the
+        // fixture answers method_not_found, proving the open call happened
+        // instead of the stale slot short-circuit.
+        let err = host.connect_leased("s1", "conn-1").unwrap_err();
+        assert!(err.contains("session.open"), "{err}");
+        assert!(err.contains("method_not_found"), "{err}");
+        host.shutdown();
     }
 }

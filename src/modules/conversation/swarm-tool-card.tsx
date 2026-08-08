@@ -1,24 +1,25 @@
 import { Check, ChevronRight, Layers, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import type { LiveMessage } from "@/hooks/types";
+import { formatAgentModelDisplay, resolveAgentModelDisplay } from "@/lib/agent-model-display";
 import { useAgentMonitorStore } from "@/lib/agent-monitor/store";
-import {
-  formatAgentModelDisplay,
-  resolveAgentModelDisplay,
-} from "@/lib/agent-model-display";
 import { parseSwarmResult } from "@/lib/swarm/parseSwarmResult";
 import {
+  agentTaskToSwarmMember,
   buildSwarmCardRows,
+  isToolRunning,
+  PHASE_LABEL,
   type PlannedSwarmItem,
-  resolveSwarmMembers,
+  phaseTextClass,
+  resolveSwarmTasks,
   type SwarmCardRow,
   type SwarmMember,
   type SwarmPhase,
-  statusToDotKind,
 } from "@/lib/swarm/swarmCardRows";
 import { cn } from "@/lib/utils";
 import { Expandable } from "@/ui/expandable";
-import { StatusDot } from "@/ui/status-dot";
+import { StatusDot, statusToDotKind } from "@/ui/status-dot";
 
 type ToolCall = NonNullable<LiveMessage["toolCall"]>;
 
@@ -29,14 +30,6 @@ const PHASE_ORDER: readonly { phase: SwarmPhase; barClass: string; legendClass: 
   { phase: "failed", barClass: "bg-danger", legendClass: "bg-danger" },
   { phase: "queued", barClass: "bg-line-strong", legendClass: "bg-line-strong" },
 ];
-
-const PHASE_LABEL: Record<SwarmPhase, string> = {
-  completed: "已完成",
-  working: "运行中",
-  suspended: "已暂停",
-  failed: "失败",
-  queued: "排队中",
-};
 
 function plannedItemName(item: unknown, index: number): string {
   if (typeof item === "string" && item.trim()) return item.trim();
@@ -57,32 +50,24 @@ function parseSwarmInput(input: unknown): {
   if (typeof input !== "object" || input === null) return { plannedItems: [] };
   const r = input as Record<string, unknown>;
   const items = Array.isArray(r.items) ? r.items : undefined;
+  const resumeAgentIds =
+    typeof r.resume_agent_ids === "object" && r.resume_agent_ids !== null
+      ? Object.keys(r.resume_agent_ids as Record<string, unknown>)
+      : [];
+  const resumedItems = resumeAgentIds.map((agentId, index) => ({
+    name: `恢复 ${agentId}`,
+    index,
+  }));
   return {
     description: typeof r.description === "string" ? r.description : undefined,
-    plannedItems: (items ?? []).map((item, index) => ({
-      name: plannedItemName(item, index),
-      index,
-    })),
+    plannedItems: [
+      ...resumedItems,
+      ...(items ?? []).map((item, index) => ({
+        name: plannedItemName(item, index),
+        index: resumeAgentIds.length + index,
+      })),
+    ],
   };
-}
-
-function isToolRunning(state: ToolCall["state"]): boolean {
-  return state === "input-streaming" || state === "input-available";
-}
-
-function phaseTextClass(phase: SwarmPhase): string {
-  switch (phase) {
-    case "completed":
-      return "text-success";
-    case "failed":
-      return "text-danger";
-    case "working":
-      return "text-foreground";
-    case "suspended":
-      return "text-warn";
-    default:
-      return "text-faint";
-  }
 }
 
 function MemberRow({ row, member }: { row: SwarmCardRow; member?: SwarmMember }) {
@@ -146,13 +131,15 @@ function MemberRow({ row, member }: { row: SwarmCardRow; member?: SwarmMember })
 }
 
 export function SwarmToolCard({ toolCall }: { toolCall: ToolCall }) {
-  const tasks = useAgentMonitorStore((state) => state.tasks);
+  // Subscribe only to this swarm's task objects. Unrelated agent updates used
+  // to rerender every historical Swarm card because each card selected the
+  // entire global task array.
+  const tasks = useAgentMonitorStore(
+    useShallow((state) => resolveSwarmTasks(state.tasks, toolCall.toolCallId)),
+  );
   const input = useMemo(() => parseSwarmInput(toolCall.input), [toolCall.input]);
   const result = useMemo(() => parseSwarmResult(toolCall.output), [toolCall.output]);
-  const members = useMemo(
-    () => resolveSwarmMembers(tasks, toolCall.toolCallId),
-    [tasks, toolCall.toolCallId],
-  );
+  const members = useMemo(() => tasks.map(agentTaskToSwarmMember), [tasks]);
   const denied = toolCall.state === "output-denied";
   const failedToRun = denied || Boolean(toolCall.isError);
   const rows = useMemo(
@@ -201,6 +188,23 @@ export function SwarmToolCard({ toolCall }: { toolCall: ToolCall }) {
       (settled && ((result?.failed ?? 0) > 0 || (result?.aborted ?? 0) > 0)));
   const aggregateOk = settled && !aggregateError && !denied;
   const waitingForMembers = !running && !settled && !denied && !toolCall.isError;
+  const visiblyActive = running || inProgress > 0 || nestedInProgress > 0 || waitingForMembers;
+  const startedAt = useMemo(() => {
+    const timestamps = tasks
+      .map((task) => task.startedAt ?? task.createdAt)
+      .filter((value) => Number.isFinite(value));
+    return timestamps.length > 0 ? Math.min(...timestamps) : undefined;
+  }, [tasks]);
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => {
+    if (!visiblyActive || startedAt === undefined) return;
+    const timer = window.setInterval(() => setClock(Date.now()), 5_000);
+    return () => window.clearInterval(timer);
+  }, [startedAt, visiblyActive]);
+  const elapsedSeconds =
+    visiblyActive && startedAt !== undefined
+      ? Math.max(0, Math.floor((clock - startedAt) / 1000))
+      : 0;
 
   const [open, setOpen] = useState(
     running || inProgress > 0 || nestedInProgress > 0 || denied || waitingForMembers,
@@ -215,15 +219,17 @@ export function SwarmToolCard({ toolCall }: { toolCall: ToolCall }) {
 
   const denialText =
     denied || toolCall.isError
-      ? (toolCall.errorText ?? (Array.isArray(toolCall.output) ? toolCall.output.join("\n") : toolCall.output) ?? "")
+      ? (
+          toolCall.errorText ??
+          (Array.isArray(toolCall.output) ? toolCall.output.join("\n") : toolCall.output) ??
+          ""
+        )
           .toString()
           .trim()
       : "";
 
   const fallbackOutput =
-    rows.length === 0 && !result && !running && !denied
-      ? (toolCall.output ?? "").trim()
-      : "";
+    rows.length === 0 && !result && !running && !denied ? (toolCall.output ?? "").trim() : "";
 
   return (
     <div
@@ -257,11 +263,14 @@ export function SwarmToolCard({ toolCall }: { toolCall: ToolCall }) {
         <span className="shrink-0 font-mono text-[11px] text-muted">
           {done} / {total}
         </span>
+        {elapsedSeconds > 0 ? (
+          <span className="shrink-0 font-mono text-[10px] text-faint">{elapsedSeconds}s</span>
+        ) : null}
         {nestedCount > 0 ? (
           <span className="shrink-0 font-mono text-[10px] text-faint">+{nestedCount} 派生</span>
         ) : null}
         <span className="inline-flex shrink-0 items-center">
-          {running || inProgress > 0 || nestedInProgress > 0 || waitingForMembers ? (
+          {visiblyActive ? (
             <StatusDot status="running" />
           ) : aggregateError ? (
             <X size={12} strokeWidth={1.75} className="text-danger" />
@@ -291,7 +300,7 @@ export function SwarmToolCard({ toolCall }: { toolCall: ToolCall }) {
               <span className="font-mono text-[10.5px] text-muted">
                 {denied
                   ? "已拒绝 / 未执行"
-                  : running || inProgress > 0 || nestedInProgress > 0 || waitingForMembers
+                  : visiblyActive
                     ? inProgress > 0
                       ? counts.working > 0 || counts.suspended > 0
                         ? `${inProgress} 个进行中`

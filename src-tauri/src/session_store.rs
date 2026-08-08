@@ -26,33 +26,12 @@ pub fn sessions_root() -> Result<PathBuf, String> {
     Ok(kimi_code_home_dir()?.join("sessions"))
 }
 
-fn work_dir_by_hash() -> Result<std::collections::HashMap<String, String>, String> {
-    let metadata_path = kimi_code_home_dir()?.join("kimi.json");
-    if !metadata_path.is_file() {
-        return Ok(std::collections::HashMap::new());
-    }
-    let content = fs::read_to_string(&metadata_path)
-        .map_err(|err| format!("Failed to read {}: {err}", metadata_path.display()))?;
-    let metadata: Value = serde_json::from_str(&content)
-        .map_err(|err| format!("Failed to parse {}: {err}", metadata_path.display()))?;
-    let mut result = std::collections::HashMap::new();
-    if let Some(entries) = metadata.get("work_dirs").and_then(Value::as_array) {
-        for entry in entries {
-            if let Some(path) = entry.get("path").and_then(Value::as_str) {
-                let hash = format!("{:x}", md5::compute(path.as_bytes()));
-                result.insert(hash, path.to_string());
-            }
-        }
-    }
-    Ok(result)
-}
-
 fn resolve_work_dir_from_session_dir(session_dir: &Path) -> Option<String> {
     let hash_key = session_dir
         .parent()
         .and_then(|parent| parent.file_name())
         .and_then(|name| name.to_str())?;
-    work_dir_by_hash()
+    crate::session_files::work_dir_by_hash()
         .ok()
         .and_then(|map| map.get(hash_key).cloned())
 }
@@ -338,7 +317,10 @@ pub fn list_local_sessions() -> Result<Vec<Value>, String> {
     Ok(sessions)
 }
 
-fn wire_jsonl_path(session_dir: &Path) -> Option<PathBuf> {
+/// Resolve a session's wire log: legacy `wire.jsonl` first, then the current
+/// `agents/main/wire.jsonl`. Shared with `goal_store` so both readers agree
+/// on which log is authoritative.
+pub(crate) fn wire_jsonl_path(session_dir: &Path) -> Option<PathBuf> {
     let legacy = session_dir.join("wire.jsonl");
     if legacy.is_file() {
         return Some(legacy);
@@ -852,9 +834,14 @@ pub fn replay_session_history(session_id: &str) -> Result<Vec<String>, String> {
     let mut emitted_turns = HashSet::new();
     let mut latest_usage: Option<SessionUsageSnapshot> = None;
     let mut persisted_modes = PersistedRuntimeModes::default();
+    let mut saw_goal_record = false;
     for record in records {
         // Capture persisted state and turn usage in the same pass as replay.
         update_persisted_runtime_modes(&mut persisted_modes, &record);
+        saw_goal_record |= matches!(
+            record.get("type").and_then(Value::as_str),
+            Some("goal.create" | "goal.update" | "goal.clear")
+        );
         if let Some(snapshot) = parse_usage_record(&record) {
             let scope = record.get("usageScope").and_then(Value::as_str);
             if scope.is_none() || scope == Some("turn") {
@@ -915,6 +902,17 @@ pub fn replay_session_history(session_id: &str) -> Result<Vec<String>, String> {
                 "context_tokens": used,
                 "max_context_tokens": size,
             }),
+        )?;
+    }
+
+    // Match live runtime-v1 `goal.updated`: replay only signals that the
+    // canonical journal-backed Goal snapshot must be refreshed. The replay
+    // stream never fabricates or embeds a second snapshot representation.
+    if saw_goal_record {
+        push_event(
+            &mut messages,
+            "StatusUpdate",
+            json!({ "goal_refresh": true }),
         )?;
     }
 
@@ -1637,6 +1635,42 @@ mod tests {
         assert_eq!(modes["params"]["payload"]["permission_mode"], "yolo");
         assert_eq!(modes["params"]["payload"]["swarm_mode"], true);
         assert_eq!(modes["params"]["payload"]["goal_mode"], true);
+    }
+
+    #[test]
+    fn replay_session_history_appends_goal_refresh_from_native_records() {
+        let (_dir, home) = temp_home("goal-refresh-replay");
+        let _guard = set_kimi_code_home(&home);
+        let session_id = "session_goal_refresh_replay";
+        let session_dir = write_session_layout(&home, "wd_goal_replay", session_id);
+        let wire_dir = session_dir.join("agents").join("main");
+        fs::create_dir_all(&wire_dir).expect("wire dir");
+        fs::write(
+            wire_dir.join("wire.jsonl"),
+            concat!(
+                r#"{"type":"goal.create","goalId":"goal-1","objective":"Ship Goal replay"}"#,
+                "\n",
+                r#"{"type":"goal.update","status":"paused","reason":"Paused by user"}"#,
+                "\n",
+                r#"{"type":"goal.clear"}"#,
+                "\n",
+            ),
+        )
+        .expect("write Goal journal");
+
+        let messages = replay_session_history(session_id).expect("replay");
+        let refreshes = messages
+            .iter()
+            .filter_map(|raw| serde_json::from_str::<Value>(raw).ok())
+            .filter(|parsed| {
+                parsed["params"]["type"] == "StatusUpdate"
+                    && parsed["params"]["payload"]["goal_refresh"] == true
+            })
+            .count();
+        assert_eq!(
+            refreshes, 1,
+            "Goal replay must request one canonical refresh"
+        );
     }
 
     #[test]

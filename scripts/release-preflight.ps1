@@ -7,6 +7,15 @@ $ErrorActionPreference = "Stop"
 
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $TauriConfig = Join-Path $ProjectRoot "src-tauri\tauri.conf.json"
+$KnownSecretScanFalsePositiveGlobs = @(
+    # Pinned upstream-generated assets contain random byte strings that can
+    # resemble credential prefixes; the two tests intentionally use fake keys.
+    "runtime/kimi-code/apps/kimi-code/dist-web/**",
+    "runtime/kimi-code/packages/agent-core/src/tools/support/webp-dec-wasm.ts",
+    "runtime/kimi-code/packages/agent-core-v2/src/agent/media/webp-dec-wasm.ts",
+    "runtime/kimi-code/apps/vscode/test/kimi-harness.integration.test.ts",
+    "runtime/kimi-code/packages/agent-core-v2/test/kosong/provider/composition.test.ts"
+)
 
 function Invoke-Step {
     param(
@@ -37,12 +46,22 @@ function Test-SecretScanExcludedPath {
     param([string]$RelativePath)
 
     $normalized = $RelativePath -replace '\\', '/'
-    return (
+    if (
         $normalized -match '(^|/)node_modules(/|$)' -or
         $normalized -match '(^|/)dist(/|$)' -or
         $normalized -match '(^|/)src-tauri/target(/|$)' -or
         $normalized -match '(^|/)src-tauri/gen(/|$)'
-    )
+    ) {
+        return $true
+    }
+
+    foreach ($glob in $KnownSecretScanFalsePositiveGlobs) {
+        if ($normalized -like $glob) {
+            return $true
+        }
+    }
+
+    return $false
 }
 
 function Invoke-SecretScanPowerShell {
@@ -102,6 +121,9 @@ function Invoke-SecretScan {
         "-g", "!src-tauri/target",
         "-g", "!src-tauri/gen"
     )
+    foreach ($glob in $KnownSecretScanFalsePositiveGlobs) {
+        $args += @("-g", "!$glob")
+    }
 
     $output = & rg @args 2>&1
     $exitCode = $LASTEXITCODE
@@ -170,6 +192,14 @@ function Assert-SourceRuntime {
         throw "Source commit mismatch: UPSTREAM.md=$frozenCommit, protocol.ts=$sourceCommit. Re-sync the freeze and rebuild."
     }
     Write-Host "Source commit verified: $frozenCommit (UPSTREAM.md == KIMI_SOURCE_COMMIT)."
+
+    # (b.5) ripgrep gate: the marker scans below are fail-closed. A missing rg
+    # is a hard error with install hints, never a silent skip or a raw
+    # CommandNotFoundException from `& rg`.
+    $rg = Get-Command rg -ErrorAction SilentlyContinue
+    if (-not $rg) {
+        throw "ripgrep (rg) is required for the Source Runtime marker scans but was not found on PATH. Install it (e.g. 'winget install BurntSushi.ripgrep.MSVC' or 'choco install ripgrep -y') and re-run the release preflight."
+    }
 
     # (c) No PATH 'kimi' dependency in production paths. The needle list lives
     # in this file, so exclude this script from its own scan.

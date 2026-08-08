@@ -235,7 +235,7 @@ wire type -> runtime translation -> live dispatch
 | `runtime/translate.rs`（+ `translate/`）、`wire_events.rs` | Runtime 事件到前端 wire 语义的翻译 |
 | `session_store.rs` | 本地 metadata、wire history 与 replay |
 | `session_files.rs`、`git_diff.rs` | 当前会话工作区文件与 Git 数据 |
-| `global_config.rs`、`mcp_config.rs` | `~/.kimi-code` 配置 |
+| `global_config.rs` | `~/.kimi-code` 配置 |
 | `security.rs` | 路径与本地访问安全边界 |
 
 Source Runtime 模块：

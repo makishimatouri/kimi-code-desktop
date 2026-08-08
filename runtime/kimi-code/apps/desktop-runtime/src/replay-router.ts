@@ -36,9 +36,9 @@
  * 7. a torn final journal line is dropped (crash mid-flush); corruption
  *    anywhere else fails the request with `internal_error`.
  * 8. the subagent roster depends on `state.json` (the `agents/` directory
- *    scan is the fallback); provenance (`parentToolCallId`, `subagentType`)
- *    is not persisted and replays as null — the Rust provenance fallback
- *    renders such calls top-level.
+ *    scan is the fallback). Parent/depth/index provenance is recovered from
+ *    state labels plus persisted AgentSwarm inputs when available; older or
+ *    incomplete journals still replay unknown fields as null.
  * 9. turn ordinals are per-agent (0-based grouping, engine-aligned).
  * 10. the journal is re-read from disk on every replay call, so an engine
  *    migration rewrite (or any later append) is picked up; a live session's
@@ -61,6 +61,7 @@
 import {
   IAppendLogStore,
   ISessionIndex,
+  ISessionLegacyService,
 } from '@moonshot-ai/agent-core-v2';
 
 import {
@@ -125,14 +126,39 @@ export function createReplayHandlers(ctx: RuntimeHandlerContext): RuntimeHandler
         false,
       );
     }
-    // Land a live session's write-behind before the disk read (degradation
-    // 10); a flush failure must not block the replay.
+    // `ISessionLegacyService` is a source-owned v1 edge projection, not an
+    // ACP/backend fallback. Its Goal read resumes the source session when
+    // cold, resolves the main agent, and returns IAgentGoalService's
+    // canonical public snapshot. Reading it here avoids reimplementing the
+    // GoalModel fold in the Desktop adapter; explicit null clears stale UI.
+    // A Goal read failure is best-effort like the flush below: the burst
+    // replays without `goal.updated` instead of failing the whole request —
+    // only journal corruption (replay/journal.ts, degradation 7) is
+    // fail-closed.
+    const goalSnapshot = await engine.app.accessor
+      .get(ISessionLegacyService)
+      .goal(params.sessionId)
+      .catch((error: unknown) => {
+        console.error(
+          `[desktop-runtime] session.replay: goal snapshot read failed for session ${params.sessionId}; replaying without goal.updated: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+        return undefined;
+      });
+    // Land the resumed session's write-behind before the disk read
+    // (degradation 10); a flush failure must not block the replay.
     await engine.app.accessor
       .get(IAppendLogStore)
       .flush()
       .catch(() => undefined);
 
-    const burst = await planSessionReplay(engine.homeDir, summary.workspaceId, params.sessionId);
+    const burst = await planSessionReplay(
+      engine.homeDir,
+      summary.workspaceId,
+      params.sessionId,
+      goalSnapshot,
+    );
     const skip = params.fromSeq ?? 0;
     const window =
       params.limit === undefined ? burst.slice(skip) : burst.slice(skip, skip + params.limit);

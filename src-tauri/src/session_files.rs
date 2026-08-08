@@ -2,7 +2,7 @@
 
 use crate::runtime::client::RuntimeClient;
 use crate::runtime::host::RuntimeHost;
-use crate::runtime::supervisor::RuntimeError;
+use crate::runtime::runtime_error_message;
 use crate::runtime_check;
 use crate::security;
 use crate::session_store;
@@ -43,22 +43,10 @@ pub fn resolve_session_work_dir_runtime(
     let client = RuntimeClient::new(&supervisor);
     let descriptor = client
         .sessions_get(session_id, SESSIONS_GET_TIMEOUT)
-        .map_err(|err| session_work_dir_error("sessions.get", err))?;
+        .map_err(|err| runtime_error_message("sessions.get", err))?;
     match descriptor.cwd {
         Some(cwd) if !cwd.is_empty() => Ok(PathBuf::from(cwd)),
         _ => Err("Session not found".to_string()),
-    }
-}
-
-/// Command-level error mapping for work-dir resolution, mirroring the auth
-/// family: a runtime `Rejected` surfaces its code/message; fatal failures
-/// surface as an operation failure.
-fn session_work_dir_error(operation: &str, err: RuntimeError) -> String {
-    match err {
-        RuntimeError::Rejected(body) => {
-            format!("{operation} rejected: {}: {}", body.code, body.message)
-        }
-        other => format!("{operation} failed: {other}"),
     }
 }
 
@@ -75,25 +63,11 @@ fn resolve_work_dir_from_session_dir(session_dir: &Path) -> Result<Option<PathBu
     Ok(work_dirs.get(hash_key).map(PathBuf::from))
 }
 
-fn work_dir_by_hash() -> Result<HashMap<String, String>, String> {
-    let metadata_path = runtime_check::kimi_code_home_dir()?.join("kimi.json");
-    if !metadata_path.is_file() {
-        return Ok(HashMap::new());
-    }
-
-    let content = fs::read_to_string(&metadata_path)
-        .map_err(|err| format!("Failed to read {}: {err}", metadata_path.display()))?;
-    let metadata: Value = serde_json::from_str(&content)
-        .map_err(|err| format!("Failed to parse {}: {err}", metadata_path.display()))?;
-
+pub(crate) fn work_dir_by_hash() -> Result<HashMap<String, String>, String> {
     let mut result = HashMap::new();
-    if let Some(entries) = metadata.get("work_dirs").and_then(Value::as_array) {
-        for entry in entries {
-            if let Some(path) = entry.get("path").and_then(Value::as_str) {
-                let hash = format!("{:x}", md5::compute(path.as_bytes()));
-                result.insert(hash, path.to_string());
-            }
-        }
+    for path in read_work_dirs_from_kimi_json()? {
+        let hash = format!("{:x}", md5::compute(path.as_bytes()));
+        result.insert(hash, path);
     }
     Ok(result)
 }
@@ -303,6 +277,16 @@ fn guess_content_type(file_path: &Path) -> String {
 
 /// Work directories recorded in `~/.kimi-code/kimi.json` (most recent first).
 pub fn work_dirs_from_metadata() -> Result<Vec<String>, String> {
+    Ok(read_work_dirs_from_kimi_json()?
+        .into_iter()
+        .filter(|path| !path.is_empty())
+        .collect())
+}
+
+/// Read the raw `work_dirs[].path` entries of `~/.kimi-code/kimi.json`.
+/// Shared reader for the hash-keyed session lookup and the sidebar listing;
+/// each consumer maps the list to its own shape.
+fn read_work_dirs_from_kimi_json() -> Result<Vec<String>, String> {
     let metadata_path = runtime_check::kimi_code_home_dir()?.join("kimi.json");
     if !metadata_path.is_file() {
         return Ok(Vec::new());
@@ -317,9 +301,7 @@ pub fn work_dirs_from_metadata() -> Result<Vec<String>, String> {
     if let Some(entries) = metadata.get("work_dirs").and_then(Value::as_array) {
         for entry in entries {
             if let Some(path) = entry.get("path").and_then(Value::as_str) {
-                if !path.is_empty() {
-                    work_dirs.push(path.to_string());
-                }
+                work_dirs.push(path.to_string());
             }
         }
     }

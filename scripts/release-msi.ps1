@@ -288,6 +288,16 @@ try {
     Invoke-Native "node" @("scripts/sync-version.js")
 
     if (-not $SkipPreflight) {
+        # The preflight's Assert-SourceRuntime requires the built runtime dist
+        # (runtime/kimi-code/apps/desktop-runtime/dist/main.mjs). Build it on
+        # demand so a clean machine can run release:msi directly; machines that
+        # already built it (e.g. after smoke:runtime) skip the rebuild.
+        $RuntimeDistEntry = Join-Path $ProjectRoot "runtime\kimi-code\apps\desktop-runtime\dist\main.mjs"
+        $runtimeDistReady = (Test-Path $RuntimeDistEntry) -and ((Get-Item $RuntimeDistEntry).Length -gt 0)
+        if (-not $runtimeDistReady) {
+            Write-Host "Source Runtime dist is missing; building it first (npm run runtime:build)."
+            Invoke-Native "npm" @("run", "runtime:build")
+        }
         Invoke-LocalScript (Join-Path $PSScriptRoot "release-preflight.ps1") @{ SkipTauriBuild = $true }
     }
 

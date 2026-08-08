@@ -20,9 +20,10 @@ pub const METHOD_HELLO: &str = "runtime.hello";
 pub const METHOD_GET_INFO: &str = "runtime.getInfo";
 pub const METHOD_SHUTDOWN: &str = "runtime.shutdown";
 
-// M3 wave-1 parity methods (`protocol-parity.ts`). Registered on the runtime
-// with the family capability gates off (`not_implemented` placeholders);
-// the wave-2 implementations flip the gates.
+// M3 parity methods (`protocol-parity.ts`): registered in wave 1 as
+// placeholders with the capability gates off; the wave 2/3 implementations
+// flipped the gates (the fixture and the pinned runtime advertise the full
+// surface, replay/auth/usage/fork: true).
 pub const METHOD_SESSION_REPLAY: &str = "session.replay";
 pub const METHOD_SESSIONS_FORK: &str = "sessions.fork";
 pub const METHOD_AUTH_START_LOGIN: &str = "auth.startLogin";

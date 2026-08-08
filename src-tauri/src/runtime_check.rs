@@ -1,9 +1,9 @@
-use crate::runtime::host::EXPECTED_KIMI_COMMIT;
-use crate::runtime::protocol::{HelloParams, RuntimeInfo};
+use crate::runtime::host::{build_handshake_config, resolve_spawn_config};
+use crate::runtime::protocol::RuntimeInfo;
 use crate::runtime::readiness::{
     check_artifact, check_runtime, ReadinessError, ReadinessErrorKind,
 };
-use crate::runtime::supervisor::{HandshakeConfig, SpawnConfig};
+use crate::runtime::supervisor::HandshakeConfig;
 use serde::Serialize;
 use serde_json::Value;
 use std::fs::{self, OpenOptions};
@@ -246,7 +246,9 @@ fn prepare_kimi_code_config_readiness() -> ConfigReadiness {
 /// aggregate helper drops it. The runtime child is a disposable probe (start,
 /// handshake, shutdown); it never touches the managed host generation.
 pub fn check_source_runtime_readiness() -> RuntimeReadiness {
-    let (entry, spawn) = runtime_spawn_inputs();
+    let resolved = resolve_spawn_config();
+    let entry = resolved.entry;
+    let spawn = resolved.config;
     let handshake = runtime_probe_handshake();
 
     let mut errors = Vec::new();
@@ -265,49 +267,12 @@ pub fn check_source_runtime_readiness() -> RuntimeReadiness {
     build_source_runtime_readiness(&errors, probe_info.as_ref(), &entry, &config)
 }
 
-/// Resolve the bundled runtime spawn inputs for the readiness probe,
-/// mirroring the host's dev-default resolution (`runtime/host/spawn.rs`):
-/// the source-tree dist entry, overridable via `KIMI_RUNTIME_ENTRY`.
-fn runtime_spawn_inputs() -> (PathBuf, SpawnConfig) {
-    let entry = std::env::var("KIMI_RUNTIME_ENTRY")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("..")
-                .join("runtime")
-                .join("kimi-code")
-                .join("apps")
-                .join("desktop-runtime")
-                .join("dist")
-                .join("main.mjs")
-        });
-    let spawn = SpawnConfig {
-        program: "node".to_string(),
-        args: vec![entry.to_string_lossy().into_owned()],
-        env: Vec::new(),
-        cwd: None,
-    };
-    (entry, spawn)
-}
-
 /// Handshake inputs for the readiness probe: the pinned commit gate plus the
-/// production data root (the same hello the managed host sends).
+/// production data root (the same hello the managed host sends), built via
+/// the shared `host::build_handshake_config`.
 fn runtime_probe_handshake() -> HandshakeConfig {
     let data_root = kimi_code_home_dir().unwrap_or_else(|_| std::env::temp_dir());
-    HandshakeConfig {
-        hello: HelloParams::new(
-            env!("CARGO_PKG_VERSION"),
-            data_root.to_string_lossy(),
-            std::env::consts::OS,
-            std::env::consts::ARCH,
-            "en-US",
-        ),
-        expected_commit: Some(EXPECTED_KIMI_COMMIT.to_string()),
-        timeout: RUNTIME_PROBE_TIMEOUT,
-    }
+    build_handshake_config(&data_root, RUNTIME_PROBE_TIMEOUT)
 }
 
 /// Assemble the frontend `RuntimeReadiness` DTO from the gate results.
@@ -807,7 +772,9 @@ fn is_api_key_name(name: &str) -> bool {
     lowered.contains("api_key") || lowered.ends_with("_key") || lowered == "apikey"
 }
 
-fn user_home_dir() -> Result<PathBuf, String> {
+/// Shared home-dir resolution (USERPROFILE first for Windows parity, then
+/// HOME), used by the macos PATH prep, skills, and session-influence paths.
+pub(crate) fn user_home_dir() -> Result<PathBuf, String> {
     std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
         .filter(|value| !value.is_empty())

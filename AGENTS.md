@@ -10,6 +10,8 @@ English: On `codex/runtime-cutover`, this repository has completed the one-shot 
 
 English: The executable baseline is the Source Runtime (runtime-v1 stdio JSONL); ACP has been removed from production paths and `smoke:runtime` is the runtime gate. The cutover contract is `docs/plans/2026-08-08-runtime-cutover-m4.md`; the long-term maintenance policy is `docs/plans/2026-08-07-source-backend-maintenance.md`.
 
+当前 pin 的 Kimi Code 版本：**`@moonshot-ai/kimi-code@0.33.0`**（commit `53c832dfdf9566afd59a8b3d54ebd36d3cb03d72`），冻结与验证契约见 `runtime/UPSTREAM.md`。 / Pinned Kimi Code: `@moonshot-ai/kimi-code@0.33.0` (commit `53c832dfdf9566afd59a8b3d54ebd36d3cb03d72`); freeze contract: `runtime/UPSTREAM.md`.
+
 当前事实来源按优先级为：正在运行的源码和测试、`package.json` 脚本、`.github/DEVELOPMENT.md`、本文件、已确认的 Source Runtime 迁移契约、`README.md`、其他 `docs/plans/`。不要引用已删除的 `docs/DEVELOPMENT_STANDARD.md`、`docs/RELEASE.md` 或 `docs/acp-contract.md`。
 
 English: Sources of truth, in order, are running source and tests, `package.json` scripts, `.github/DEVELOPMENT.md`, this file, the accepted Source Runtime migration contract, `README.md`, and other plans. Do not reference the removed `docs/DEVELOPMENT_STANDARD.md`, `docs/RELEASE.md`, or `docs/acp-contract.md`.
@@ -40,7 +42,7 @@ English:
 - 会话 wire 流由 `runtime/host.rs`（RuntimeHost）统一管理：supervisor 懒启动/重建、泵线程单点 emit、会话表/lease、控制通道；`runtime-v1` stdio JSONL 是 Rust 与 Node runtime 之间唯一协议。
 - V2 已重新接入单一活动 `useSessionStream`、历史回放、附件、状态消息、工具 display blocks、子代理步骤，以及通用未知 payload fallback。
 - Workspace 已接入 Changes、Files、Agents、Tasks；Composer 已接入 slash 命令、文件上传、忙碌时队列和全局模型显示。
-- `/usage` / `/status` 由桌面本地拉取平台额度（5h / 7d）；未知斜杠指令会拦截提示。详见 `docs/SLASH_COMMAND_PARITY.md`。
+- `/usage` / `/status` 由桌面本地拉取平台额度（5h / 7d）；未知斜杠指令会拦截提示。斜杠命令全集见上游文档 `runtime/kimi-code/docs/zh/reference/slash-commands.md`。
 - 会话侧栏已接入 active/archived 分页、归档/恢复、标题生成、批量归档/恢复/删除；设置已接入 dark/light 主题、全局配置、原始 `config.toml` 和 MCP。
 - 发送反馈已具备通用状态：立即显示“消息发送中”，首个可见响应后移除；空终态或 runtime 错误显示持久错误。
 
@@ -49,7 +51,7 @@ English:
 - Session wire streams are owned by `runtime/host.rs` (RuntimeHost): lazy supervisor start/restart, single pump-thread emit point, session table/lease, and a control channel; `runtime-v1` stdio JSONL is the only protocol between Rust and the Node runtime.
 - V2 reconnects a single active `useSessionStream`, replay, attachments, status messages, tool display blocks, subagent steps, and a generic fallback for unknown payloads.
 - Workspace exposes Changes, Files, Agents, and Tasks. Composer exposes slash commands, uploads, busy-state queueing, and the global model label.
-- `/usage` / `/status` are handled locally with platform quotas (5h / 7d); unknown slash commands are blocked with a desktop hint. See `docs/SLASH_COMMAND_PARITY.md`.
+- `/usage` / `/status` are handled locally with platform quotas (5h / 7d); unknown slash commands are blocked with a desktop hint. The full slash command list lives in the upstream doc `runtime/kimi-code/docs/en/reference/slash-commands.md`.
 - Sessions expose active/archived pagination, archive/restore, title generation, and bulk archive/restore/delete. Settings expose dark/light theme, global config, raw `config.toml`, and MCP.
 - Generic send feedback shows “消息发送中” immediately, clears on the first visible response, and preserves empty-terminal or runtime failures as visible errors.
 
@@ -63,7 +65,7 @@ English: Automated gates and `smoke:runtime` passed for this baseline; real visi
 - 完成 `docs/plans/2026-07-18-v2-ui-integration.md` 的剩余差距审计，特别检查桌面完成通知和所有真实运行时入口；不要仅按文件存在判断完成。`fork_session` 维持显式错误（引擎仅整会话 fork），不得伪造 fork-at-turn UI。
 - 补齐 Settings、Sessions sidebar 和 Workspace 的集成测试；system theme 尚未接入，不能把 dark/light 切换描述为完整的三态主题支持。
 - Share 没有真实后端契约时应保持移除或禁用，不要制作假入口。
-- Node SEA sidecar 构建、签名公证、`release:msi`/`desktop:release` 语义恢复与 release manifest 产出归 M5（见 M4 计划 §9）；`release:preflight` 门禁当前已生效。
+- macOS SEA sidecar 构建与 release manifest 产出已交付（b9235c12：`scripts/release-macos.sh` 在 DMG 打包前构建 SEA artifact、产出 `desktop-runtime-<triple>.manifest.json` 并交叉校验，见 M4 计划 §10）；Windows SEA 变体、正式 Developer ID 签名/notarization 与 `release:msi`/`desktop:release` 语义恢复仍属 M5（见 M4 计划 §9）；`release:preflight` 门禁当前已生效。
 
 English:
 
@@ -71,7 +73,7 @@ English:
 - Audit remaining gaps in `docs/plans/2026-07-18-v2-ui-integration.md`, especially desktop completion notifications and all real runtime entry points. `fork_session` keeps an explicit error (the engine only forks whole sessions); do not fake fork-at-turn UI.
 - Add integration coverage for Settings, Sessions sidebar, and Workspace. System theme is not wired yet, so do not describe the dark/light toggle as complete three-state theme support.
 - Keep Share removed or disabled until a real backend contract exists.
-- Node SEA sidecar build, signing/notarization, `release:msi`/`desktop:release` semantics and the release manifest are M5 (M4 plan §9); the `release:preflight` gate is already in effect.
+- The macOS SEA sidecar build and the release manifest are delivered (b9235c12: `scripts/release-macos.sh` builds the SEA artifact before DMG packaging, writes `desktop-runtime-<triple>.manifest.json` with a cross-check, M4 plan §10); the Windows SEA variant, formal Developer ID signing/notarization, and `release:msi`/`desktop:release` semantics remain M5 (M4 plan §9); the `release:preflight` gate is already in effect.
 
 ## 运行链路 / Runtime Chain
 
@@ -85,7 +87,7 @@ React app shell / useSessionStream
            -> Kimi source (createKimiHarnessV2)
      -> session_store.rs                               # local metadata + wire.jsonl replay
      -> session_compat.rs / session_config.rs          # replay/prompt migration + session config snapshot
-     -> global_config.rs / mcp_config.rs               # ~/.kimi-code config
+     -> global_config.rs                               # ~/.kimi-code config
      -> session_files.rs / git_diff.rs                 # selected session worktree
 ```
 
@@ -109,6 +111,8 @@ English: Runtime-to-frontend wire translation lives in `src-tauri/src/runtime/tr
 - 日常启动使用 `npm run desktop`；本地 release exe 使用 `npm run desktop:release`；MSI 使用 `npm run release:msi`。
 - 不要把 `cargo build --release` 当成可运行桌面构建，也不要让旧 exe/MSI 代替当前源码。
 - Source Runtime 是唯一可执行基线：运行不依赖 PATH 上的 `kimi`，不得恢复 ACP/sidecar/外部 CLI fallback；runtime artifact 缺失、握手失败或进程崩溃时 fail-closed，向用户显示可操作错误，绝不静默降级。
+- `runtime/kimi-code` 是 pin 住的上游 subtree，保持 pristine、最后才动：能在 React/Rust/脚本外层解决的就不要进 subtree；确需改动上游源码时直接提交并在 `runtime/PATCHES.md` 登记（活跃补丁超过 5 个先暂停新增），保证 `git subtree pull` 上游更新始终可干净拉取。
+- 外壳文档只写桌面特有内容；Kimi Code 用户文档（配置、Slash Commands、MCP、快捷键、CLI 参考）以 `runtime/kimi-code/docs/zh`（中文）与 `runtime/kimi-code/docs/en` 为准，不在外壳文档复制上游内容。
 
 English:
 
@@ -122,6 +126,8 @@ English:
 - Use `npm run desktop` for daily launch, `npm run desktop:release` for a local release executable, and `npm run release:msi` for MSI packaging.
 - Do not use `cargo build --release` as the runnable desktop path or substitute stale artifacts for the source tree.
 - The Source Runtime is the only executable baseline: it must not depend on `kimi` on PATH, must not restore ACP/sidecar/external-CLI fallbacks, and must fail closed (an actionable error) when the artifact is missing, the handshake fails, or the runtime process crashes — never degrade silently.
+- `runtime/kimi-code` is a pinned upstream subtree: keep it pristine and touch it last — solve in the React/Rust/scripts layer first; unavoidable upstream-source edits are committed directly and registered in `runtime/PATCHES.md` (pause new patches beyond 5 active), so `git subtree pull` stays cleanly applicable.
+- Shell docs cover desktop-specific topics only; Kimi Code user docs (configuration, slash commands, MCP, shortcuts, CLI reference) live in `runtime/kimi-code/docs/zh` and `runtime/kimi-code/docs/en` — do not copy them into shell docs.
 
 ## 标准命令 / Canonical Commands
 
@@ -162,6 +168,9 @@ src-tauri/src/session_compat.rs              # replay/prompt migration helpers (
 src-tauri/src/session_config.rs              # session config snapshot types (runtime-neutral)
 src-tauri/src/session_store.rs               # persisted new-format replay and local metadata
 src-tauri/src/runtime_check.rs               # artifact/manifest/auth/config readiness
+runtime/AGENTS.md                            # runtime/ 目录边界：UPSTREAM/PATCHES 契约与 pristine 规则
+runtime/UPSTREAM.md                          # pinned upstream freeze/update contract
+runtime/PATCHES.md                           # upstream patch registry
 runtime/kimi-code/                           # pinned upstream source plus Desktop Runtime app
 runtime/kimi-code/apps/desktop-runtime/      # source-built Node runtime (dist/main.mjs entry)
 scripts/check-quick.mjs

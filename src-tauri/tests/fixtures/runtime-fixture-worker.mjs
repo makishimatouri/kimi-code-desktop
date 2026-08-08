@@ -21,7 +21,7 @@
  *
  * M3 parity methods (session.replay, sessions.fork, auth.*, usage.get) are
  * registered and, since wave 3, advertised with the real runtime's flipped
- * capability gates (replay/auth/usage/fork: true, events: the full 25-name
+ * capability gates (replay/auth/usage/fork: true, events: the full 26-name
  * session event set). The fixture implements no business logic, so calls
  * still answer a structured not_implemented error-response.
  *
@@ -71,8 +71,8 @@ const M4_METHODS = [
   'providers.import',
 ];
 
-// The 25 runtime-v1 session events (SESSION_EVENT_NAMES in protocol.ts):
-// the 15 M1 base events plus the 10 M3 fidelity events.
+// The 26 runtime-v1 session events (SESSION_EVENT_NAMES in protocol.ts):
+// the 16 base events plus the 10 M3 fidelity events.
 const SESSION_EVENT_NAMES = [
   'session.status',
   'session.config',
@@ -82,6 +82,7 @@ const SESSION_EVENT_NAMES = [
   'tool.updated',
   'tool.completed',
   'plan.updated',
+  'goal.updated',
   'usage.updated',
   'task.updated',
   'subagent.updated',

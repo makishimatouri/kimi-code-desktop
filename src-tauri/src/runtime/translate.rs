@@ -3,8 +3,8 @@
 //! Input: [`EventFrame`]s from the supervisor's event stream. Output: legacy
 //! desktop wire JSON strings — the exact lines `wire:message` delivers to the
 //! frontend `useSessionStream` consumer. The output contract is
-//! `src/hooks/wireTypes.ts` with `the pre-cutover ACP translation module` as the behavioral
-//! baseline: field names, nesting, and optionality are kept identical so the
+//! `src/hooks/wireTypes.ts` with the ACP-era `acp_translate.rs` (deleted in the M4 cutover)
+//! as the behavioral baseline: field names, nesting, and optionality are kept identical so the
 //! existing UI works unchanged. Input payload conventions follow
 //! `runtime/kimi-code/apps/desktop-runtime/src/protocol.ts`
 //! (`sessionEventPayloadSchemas`) and `event-bridge.ts` (camelCase structural
@@ -151,6 +151,10 @@ fn cloned_for_keys(value: &Value, keys: &[&str]) -> Value {
 struct SubagentProvenance {
     parent_tool_call_id: Option<String>,
     subagent_type: Option<String>,
+    parent_agent_id: Option<String>,
+    swarm_index: Option<Value>,
+    swarm_depth: Option<Value>,
+    run_in_background: Option<Value>,
 }
 
 /// What `tool.started` records about one open tool call; `tool.updated` /
@@ -270,6 +274,14 @@ fn translate_session_event(
                 "content": payload.get("content").and_then(Value::as_str).unwrap_or(""),
                 "file_path": string_for_keys(payload, &["filePath", "file_path"]).unwrap_or_default(),
             }),
+        )],
+        // The runtime-v1 payload carries the native public snapshot/change,
+        // but the established frontend contract deliberately refreshes from
+        // the canonical Goal journal. Do not copy an unvalidated snapshot
+        // into a second UI state path.
+        "goal.updated" => vec![wire_event_message(
+            "StatusUpdate",
+            json!({ "goal_refresh": true }),
         )],
         "usage.updated" => vec![wire_event_message(
             "StatusUpdate",

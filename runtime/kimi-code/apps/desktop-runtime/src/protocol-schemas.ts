@@ -134,13 +134,14 @@ export const turnStartParamsSchema = z.object({
 });
 /**
  * turn.start answers as soon as the engine accepts the prompt: the response
- * carries the Desktop-minted requestId plus the engine's numeric turn id. The
- * terminal state arrives later as `turn.completed` / `turn.failed` session
- * events echoing the same requestId.
+ * carries the Desktop-minted requestId plus the engine's numeric turn id.
+ * Runtime-local slash commands complete without an engine turn and therefore
+ * return `turnId: null`. The terminal state arrives as `turn.completed` /
+ * `turn.failed` session events echoing the same requestId.
  */
 export const turnStartResultSchema = z.looseObject({
   requestId: z.string(),
-  turnId: z.number(),
+  turnId: z.number().nullable(),
 });
 
 export const turnCancelParamsSchema = z.object({
@@ -446,6 +447,52 @@ const baseSessionEventPayloadSchemas = {
     content: z.string(),
     filePath: z.string().optional(),
   }),
+  /**
+   * Native engine Goal state notification. The payload mirrors
+   * `DomainEventMap['goal.updated']`: a complete public snapshot (or null
+   * after clear) plus the optional lifecycle/completion change descriptor.
+   */
+  'goal.updated': z.looseObject({
+    snapshot: z
+      .looseObject({
+        goalId: z.string(),
+        objective: z.string(),
+        completionCriterion: z.string().optional(),
+        status: z.enum(['active', 'paused', 'blocked', 'complete']),
+        turnsUsed: z.number().finite().nonnegative(),
+        tokensUsed: z.number().finite().nonnegative(),
+        wallClockMs: z.number().finite().nonnegative(),
+        budget: z.looseObject({
+          tokenBudget: z.number().finite().nonnegative().nullable(),
+          turnBudget: z.number().finite().nonnegative().nullable(),
+          wallClockBudgetMs: z.number().finite().nonnegative().nullable(),
+          remainingTokens: z.number().finite().nonnegative().nullable(),
+          remainingTurns: z.number().finite().nonnegative().nullable(),
+          remainingWallClockMs: z.number().finite().nonnegative().nullable(),
+          tokenBudgetReached: z.boolean(),
+          turnBudgetReached: z.boolean(),
+          wallClockBudgetReached: z.boolean(),
+          overBudget: z.boolean(),
+        }),
+        terminalReason: z.string().optional(),
+      })
+      .nullable(),
+    change: z
+      .looseObject({
+        kind: z.enum(['lifecycle', 'completion']),
+        status: z.enum(['active', 'paused', 'blocked', 'complete']).optional(),
+        reason: z.string().optional(),
+        stats: z
+          .looseObject({
+            turnsUsed: z.number().finite().nonnegative(),
+            tokensUsed: z.number().finite().nonnegative(),
+            wallClockMs: z.number().finite().nonnegative(),
+          })
+          .optional(),
+        actor: z.enum(['user', 'model', 'runtime', 'system']).optional(),
+      })
+      .optional(),
+  }),
   'usage.updated': z.looseObject({
     contextUsage: z.number().nullish(),
     contextTokens: z.number().nullish(),
@@ -461,6 +508,10 @@ const baseSessionEventPayloadSchemas = {
     agentId: z.string().optional(),
     parentToolCallId: z.string().nullish(),
     subagentType: z.string().nullish(),
+    parentAgentId: z.string().nullish(),
+    swarmIndex: z.number().int().nonnegative().optional(),
+    swarmDepth: z.number().int().nonnegative().optional(),
+    runInBackground: z.boolean().optional(),
   }),
   'approval.requested': z.looseObject({
     approvalId: z.string(),

@@ -478,7 +478,7 @@ fn discover_agents(
             &mut candidates,
         );
     }
-    if let Ok(user_home) = user_home_dir() {
+    if let Ok(user_home) = runtime_check::user_home_dir() {
         collect_agents_from_dir(
             &user_home.join(".agents").join("agents"),
             AgentScopeRank::User,
@@ -551,19 +551,11 @@ fn extra_agent_dirs_from_config() -> Vec<PathBuf> {
 
 fn expand_home(path: &str) -> PathBuf {
     if let Some(rest) = path.strip_prefix("~/") {
-        if let Ok(home) = user_home_dir() {
+        if let Ok(home) = runtime_check::user_home_dir() {
             return home.join(rest);
         }
     }
     PathBuf::from(path)
-}
-
-fn user_home_dir() -> Result<PathBuf, String> {
-    std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .ok_or_else(|| "Unable to resolve user home directory".to_string())
 }
 
 fn collect_plugin_agents(

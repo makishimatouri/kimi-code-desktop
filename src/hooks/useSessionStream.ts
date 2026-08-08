@@ -28,10 +28,8 @@
  */
 
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
-import type { ChatStatus } from "ai";
-import type { SessionStatus, UploadSessionFileResponse } from "@/lib/api/models";
+import type { SessionStatus } from "@/lib/api/models";
 import { isMultiActiveSessionsEnabled } from "@/lib/features";
-import type { SessionConfigState } from "@/lib/session-config-state";
 import {
   EMPTY_SESSION_VIEW,
   type SessionRuntimeActions,
@@ -39,16 +37,12 @@ import {
 import { useSessionStreamOrchestrator } from "@/lib/session-stream/provider";
 import {
   createSessionRuntime,
-  type LocalInfoPanelResult,
-  type SendMessageOptions,
-  type SendMessageResult,
   type SessionRuntime,
   type SessionRuntimeOptions,
 } from "@/lib/session-stream/runtime";
 import type { ConnectionPhase, SessionViewState } from "@/lib/session-stream/types";
 import type { SlashCommandDef } from "@/lib/slash-command-catalog";
 import type { LiveMessage } from "./types";
-import type { ApprovalResponseDecision, PermissionMode, TokenUsage } from "./wireTypes";
 
 export type {
   GoalStartConfirmationResult,
@@ -78,143 +72,28 @@ type UseSessionStreamOptions = {
   autoConnect?: boolean;
 };
 
-export type UseSessionStreamReturn = {
-  /** Current messages */
-  messages: LiveMessage[];
-  /** Chat status */
-  status: ChatStatus;
-  /** Latest runtime session status snapshot */
-  sessionStatus: SessionStatus | null;
-  /** Whether the stream is still replaying history */
-  isReplayingHistory: boolean;
-  /** Whether waiting for the first response after sending a prompt */
-  isAwaitingFirstResponse: boolean;
-  /** Whether there is a real prompt that can currently be cancelled */
-  canCancel: boolean;
-  /** Current context usage (0-1) */
-  contextUsage: number;
-  /** Absolute tokens currently in context, if available */
-  contextTokens: number | null;
-  /** Context window size in tokens, if available */
-  maxContextTokens: number | null;
-  /** Current token usage for the active step, if available */
-  tokenUsage: TokenUsage | null;
-  /** Current step number */
-  currentStep: number;
-  /** Increments only after a canonical native Goal reaches natural completion. */
-  goalCompletionEpoch: number;
-  /** Whether connected to the session stream */
-  isConnected: boolean;
-  /** Send a message to the session (will auto-connect if not connected) */
-  sendMessage: (
-    text: string,
-    attachments?: UploadSessionFileResponse[],
-    options?: SendMessageOptions,
-  ) => Promise<SendMessageResult>;
-  /** Resolve /usage or /status text without writing chat messages */
-  runLocalInfoCommand: (command: "usage" | "status") => Promise<string>;
-  /** Respond to an approval request */
-  respondToApproval: (
-    requestId: string,
-    response: ApprovalResponseDecision,
-    reason?: string,
-  ) => Promise<void>;
-  /** Respond to a question request */
-  respondToQuestion: (requestId: string, answers: Record<string, string>) => Promise<void>;
-  /** Control the native Goal lifecycle even while a turn is running. */
-  controlGoal: (action: "pause" | "resume" | "cancel") => Promise<LocalInfoPanelResult | undefined>;
-  /** Send a cancel request for the current turn */
-  cancel: () => void;
-  /** Disconnect from the stream */
-  disconnect: () => void;
-  /** Reconnect to the session */
-  reconnect: () => void;
-  /** Connect to the session stream */
-  connect: () => void;
-  /** Set messages directly */
-  setMessages: React.Dispatch<React.SetStateAction<LiveMessage[]>>;
-  /** Clear all messages */
-  clearMessages: () => void;
-  /** Connection error if any */
-  error: Error | null;
-  /** Whether plan mode is active */
-  planMode: boolean;
-  /** Set plan mode via silent RPC (no context message) */
-  sendSetPlanMode: (enabled: boolean) => boolean;
-  /** Current approval behavior, independent from Plan mode */
-  permissionMode: PermissionMode;
-  /** Set the ACP permission mode while preserving Plan mode */
-  sendSetPermissionMode: (mode: PermissionMode) => boolean;
-  /** Whether coordinated multi-agent execution is active */
-  swarmMode: boolean;
-  /** Set Swarm mode via silent RPC */
-  sendSetSwarmMode: (enabled: boolean) => boolean;
-  /** Whether goal-tracking mode is active */
-  goalMode: boolean;
-  /** Set Goal mode via silent RPC */
-  sendSetGoalMode: (enabled: boolean) => boolean;
-  /** Available slash commands from the server */
-  slashCommands: SlashCommandDef[];
-  /** Session-scoped config from ACP (model / thinking / mode) */
-  sessionConfigState: SessionConfigState;
-  /** Whether a session/set_config_option write is in flight */
-  sessionConfigUpdating: boolean;
-  /** Change a declared session config option via the wire worker */
-  sendSetConfigOption: (configId: string, value: unknown) => Promise<boolean>;
+/**
+ * Snapshot fields mirror `SessionViewState` 1:1; the connection metadata fields
+ * (`connectionPhase` / `connectionId` / `updatedAt`) stay optional here as in
+ * the former inline type. Action fields mirror `SessionRuntimeActions`.
+ */
+export type UseSessionStreamReturn = Omit<
+  SessionViewState,
+  "connectionPhase" | "connectionId" | "updatedAt"
+> & {
   /** Lifecycle phase of the underlying connection */
   connectionPhase?: ConnectionPhase;
   /** Stable id of the current wire connection attempt (Tauri), if any */
   connectionId?: string | null;
   /** Timestamp (ms) of the last snapshot update */
   updatedAt?: number;
-};
+} & SessionRuntimeActions;
 
 function buildStreamReturn(
   snapshot: SessionViewState,
   actions: SessionRuntimeActions,
 ): UseSessionStreamReturn {
-  return {
-    messages: snapshot.messages,
-    status: snapshot.status,
-    sessionStatus: snapshot.sessionStatus,
-    isAwaitingFirstResponse: snapshot.isAwaitingFirstResponse,
-    canCancel: snapshot.canCancel,
-    contextUsage: snapshot.contextUsage,
-    contextTokens: snapshot.contextTokens,
-    maxContextTokens: snapshot.maxContextTokens,
-    tokenUsage: snapshot.tokenUsage,
-    currentStep: snapshot.currentStep,
-    goalCompletionEpoch: snapshot.goalCompletionEpoch,
-    isConnected: snapshot.isConnected,
-    isReplayingHistory: snapshot.isReplayingHistory,
-    sendMessage: actions.sendMessage,
-    controlGoal: actions.controlGoal,
-    runLocalInfoCommand: actions.runLocalInfoCommand,
-    respondToApproval: actions.respondToApproval,
-    respondToQuestion: actions.respondToQuestion,
-    cancel: actions.cancel,
-    disconnect: actions.disconnect,
-    reconnect: actions.reconnect,
-    connect: actions.connect,
-    setMessages: actions.setMessages,
-    clearMessages: actions.clearMessages,
-    error: snapshot.error,
-    planMode: snapshot.planMode,
-    sendSetPlanMode: actions.sendSetPlanMode,
-    permissionMode: snapshot.permissionMode,
-    sendSetPermissionMode: actions.sendSetPermissionMode,
-    swarmMode: snapshot.swarmMode,
-    sendSetSwarmMode: actions.sendSetSwarmMode,
-    goalMode: snapshot.goalMode,
-    sendSetGoalMode: actions.sendSetGoalMode,
-    slashCommands: snapshot.slashCommands,
-    sessionConfigState: snapshot.sessionConfigState,
-    sessionConfigUpdating: snapshot.sessionConfigUpdating,
-    sendSetConfigOption: actions.sendSetConfigOption,
-    connectionPhase: snapshot.connectionPhase,
-    connectionId: snapshot.connectionId,
-    updatedAt: snapshot.updatedAt,
-  };
+  return { ...snapshot, ...actions };
 }
 
 const NOOP_SUBSCRIBE = (): (() => void) => () => undefined;

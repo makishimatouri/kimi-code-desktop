@@ -1,4 +1,4 @@
-import { Check, Download, RefreshCw, Settings, TriangleAlert } from "lucide-react";
+import { Check, RefreshCw, Settings, TriangleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { RuntimeReadiness } from "@/lib/tauri-api";
 import { isRuntimeConfigIncomplete } from "@/lib/runtime-readiness";
@@ -13,7 +13,6 @@ export function ReadinessOverlay({
 	error,
 	onRetry,
 	onContinue,
-	onOpenDownload,
 	onOpenSettings,
 }: {
 	checking: boolean;
@@ -21,7 +20,6 @@ export function ReadinessOverlay({
 	error: string | null;
 	onRetry: () => void;
 	onContinue: () => void;
-	onOpenDownload: () => void;
 	onOpenSettings: () => void;
 }) {
 	const [showSlowHint, setShowSlowHint] = useState(false);
@@ -128,12 +126,6 @@ export function ReadinessOverlay({
 										<Settings size={12} strokeWidth={1.5} />
 										打开配置设置
 									</Button>
-									{!readiness.externalCli.available && (
-										<Button variant="ghost" onClick={onOpenDownload}>
-											<Download size={12} strokeWidth={1.5} />
-											前往下载
-										</Button>
-									)}
 									<Button variant="ghost" onClick={onRetry}>
 										<RefreshCw size={12} strokeWidth={1.5} />
 										重试
@@ -148,12 +140,6 @@ export function ReadinessOverlay({
 									</p>
 								)}
 								<div className="flex gap-2">
-									{!readiness.externalCli.available && (
-										<Button variant="primary" onClick={onOpenDownload}>
-											<Download size={12} strokeWidth={1.5} />
-											前往下载
-										</Button>
-									)}
 									<Button variant="ghost" onClick={onRetry}>
 										<RefreshCw size={12} strokeWidth={1.5} />
 										重试
