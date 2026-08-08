@@ -341,9 +341,13 @@ mod tests {
 
     #[test]
     fn runtime_v1_model_only_slice_synthesizes_model_option() {
-        let state = parse_session_config_from_response("sess-minimal", &json!({ "model": "kimi-k2" }));
+        let state =
+            parse_session_config_from_response("sess-minimal", &json!({ "model": "kimi-k2" }));
         assert_eq!(state.status, SessionConfigStatus::Known);
-        assert_eq!(state.option_by_id("model").unwrap().current_value, Some(json!("kimi-k2")));
+        assert_eq!(
+            state.option_by_id("model").unwrap().current_value,
+            Some(json!("kimi-k2"))
+        );
     }
 
     #[test]

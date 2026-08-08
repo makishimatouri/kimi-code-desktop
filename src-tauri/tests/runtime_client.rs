@@ -177,7 +177,11 @@ fn late_response_after_timeout_is_dropped_without_faulting() {
     // must be classified TimedOut and dropped, not UnknownResponseId —
     // which would fail a healthy runtime closed.
     let err = client
-        .call("fixture.slowRespond", json!({"delayMs": 400}), SHORT_TIMEOUT)
+        .call(
+            "fixture.slowRespond",
+            json!({"delayMs": 400}),
+            SHORT_TIMEOUT,
+        )
         .expect_err("slowRespond must time out");
     assert!(
         matches!(err, RuntimeError::Timeout(_)),

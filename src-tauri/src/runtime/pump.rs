@@ -349,7 +349,10 @@ mod tests {
                 result: Value::Null,
             },
         );
-        assert!(result.is_ok(), "late response must be dropped, got {result:?}");
+        assert!(
+            result.is_ok(),
+            "late response must be dropped, got {result:?}"
+        );
         assert_eq!(*lock(&shared.state), SupervisorState::Ready);
         assert_eq!(*lock(&shared.fault), None);
         assert!(

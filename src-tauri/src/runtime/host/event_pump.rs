@@ -417,7 +417,10 @@ mod tests {
             .iter()
             .find(|raw| raw.contains("ConfigOptionUpdate"))
             .unwrap_or_else(|| panic!("no ConfigOptionUpdate in replay: {messages:?}"));
-        assert!(config_line.contains("\"status\":\"known\""), "{config_line}");
+        assert!(
+            config_line.contains("\"status\":\"known\""),
+            "{config_line}"
+        );
         assert!(config_line.contains("\"id\":\"model\""), "{config_line}");
     }
 }

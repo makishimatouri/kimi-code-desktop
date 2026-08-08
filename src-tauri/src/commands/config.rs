@@ -39,7 +39,9 @@ use crate::session_config::{
 };
 use serde_json::{json, Value};
 use std::fs;
-use std::fs::{File, OpenOptions};
+#[cfg(unix)]
+use std::fs::File;
+use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -166,21 +168,24 @@ fn temp_config_path(path: &Path) -> Result<PathBuf, String> {
     )))
 }
 
+#[cfg(unix)]
 fn sync_parent_directory(path: &Path) -> Result<(), String> {
-    #[cfg(unix)]
-    {
-        let parent = path
-            .parent()
-            .ok_or_else(|| format!("Config path has no parent: {}", path.display()))?;
-        File::open(parent)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|error| {
-                format!(
-                    "Failed to sync config directory {}: {error}",
-                    parent.display()
-                )
-            })?;
-    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("Config path has no parent: {}", path.display()))?;
+    File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| {
+            format!(
+                "Failed to sync config directory {}: {error}",
+                parent.display()
+            )
+        })?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn sync_parent_directory(_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
