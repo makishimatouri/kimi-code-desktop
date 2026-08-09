@@ -2,8 +2,8 @@
 
 状态：生效中
 日期：2026-08-07
-用途：`runtime_translate.rs` 与 adapter 的验收标准。**本清单全绿 = 现有 UI 原样可用，零组件改动。**
-盘点来源：`src/hooks/wireTypes.ts`、`src/lib/tool-events/tool-registry.ts`、`src-tauri/src/commands.rs`（2026-08-07 实际代码盘点）。
+用途：`src-tauri/src/runtime/translate.rs`（含 `translate/`）与 adapter 的验收标准。**本清单全绿 = Source Runtime 的现有 UI 语义完整。**
+盘点来源：`src/hooks/wireTypes.ts`、`src/lib/tool-events/tool-registry.ts`、`src-tauri/src/commands/mod.rs`（2026-08-07 初次盘点，2026-08-09 路径复核）。
 
 ## 1. wire 事件全表（30 类，live 与 replay 必须同形）
 

@@ -1,5 +1,7 @@
 # UI V2 Monochrome Rewrite 实施计划
 
+> **文档状态（2026-08-09）：已执行的历史计划。** 本文保留 V2 重写时的删除、移动与接线步骤，不作为当前目录结构的修改指令；现行结构以根 `AGENTS.md` 和 [`.github/DEVELOPMENT.md`](../../../.github/DEVELOPMENT.md) 为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 按已定稿的 Monochrome Pro 设计（`docs/superpowers/specs/2026-07-18-ui-v2-monochrome-rewrite-design.md`）推倒重写 Kimi Code Desktop 的全部 UI，保留数据层。
@@ -509,7 +511,7 @@ git add -A; git commit -m "feat(app): add AppShell layout skeleton with rail and
 - Consumes: `useSessions({enabled})`（`@/hooks/useSessions`，返回见 spec §7.5）；`Session`（`@/lib/api/models`）
 - Produces:
   - `groupSessionsByDay(sessions: Session[], now?: Date): { label: string; items: Session[] }[]`（分组：今天/昨天/本周/更早，各组内保持传入顺序）
-  - `<SessionsSidebar sessions selectedId searchQuery onSearch onSelect onCreate onDelete onRename running>` 
+  - `<SessionsSidebar sessions selectedId searchQuery onSearch onSelect onCreate onDelete onRename running>`
   - `<Topbar title shortId panelOpen onTogglePanel>`
 
 - [ ] **Step 1: 失败测试 `session-groups.test.ts`**

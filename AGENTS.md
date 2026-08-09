@@ -2,9 +2,9 @@
 
 ## 项目定位 / Project Role
 
-本仓库已在 `codex/runtime-cutover` 分支完成一次性切换，是源码自有的 Kimi Code Desktop 产品。React/Tauri 负责桌面体验和进程编排；`runtime/kimi-code` 内的 Kimi 源码是仓内唯一 AI Runtime 内核，构建为 Node 子进程并随应用交付。产品不依赖用户安装的 CLI，不使用 ACP，也没有生产双 backend 或静默 fallback。
+本仓库已通过 `codex/runtime-cutover` 完成一次性切换，当前 `master` 基线是源码自有的 Kimi Code Desktop 产品。React/Tauri 负责桌面体验和进程编排；`runtime/kimi-code` 内的 Kimi 源码是仓内唯一 AI Runtime 内核，构建为 Node 子进程并随应用交付。产品不依赖用户安装的 CLI，不使用 ACP，也没有生产双 backend 或静默 fallback。
 
-English: On `codex/runtime-cutover`, this repository has completed the one-shot cutover to a source-owned Kimi Code Desktop product. React/Tauri owns desktop UX and process orchestration; the vendored Kimi source under `runtime/kimi-code` is the only AI runtime kernel, built as a Node child process and shipped with the app. The product does not depend on an installed CLI, does not use ACP, and has no production dual backend or silent fallback.
+English: The one-shot cutover completed through `codex/runtime-cutover`; the current `master` baseline is a source-owned Kimi Code Desktop product. React/Tauri owns desktop UX and process orchestration; the vendored Kimi source under `runtime/kimi-code` is the only AI runtime kernel, built as a Node child process and shipped with the app. The product does not depend on an installed CLI, does not use ACP, and has no production dual backend or silent fallback.
 
 当前可执行基线已是 Source Runtime（`runtime-v1` stdio JSONL）；ACP 已从生产路径移除，`smoke:runtime` 是运行时门禁。切换契约以 `docs/plans/2026-08-08-runtime-cutover-m4.md` 为准；长期维护策略见 `docs/plans/2026-08-07-source-backend-maintenance.md`。
 
@@ -12,9 +12,9 @@ English: The executable baseline is the Source Runtime (runtime-v1 stdio JSONL);
 
 当前 pin 的 Kimi Code 版本：**`@moonshot-ai/kimi-code@0.33.0`**（commit `53c832dfdf9566afd59a8b3d54ebd36d3cb03d72`），冻结与验证契约见 `runtime/UPSTREAM.md`。 / Pinned Kimi Code: `@moonshot-ai/kimi-code@0.33.0` (commit `53c832dfdf9566afd59a8b3d54ebd36d3cb03d72`); freeze contract: `runtime/UPSTREAM.md`.
 
-当前事实来源按优先级为：正在运行的源码和测试、`package.json` 脚本、`.github/DEVELOPMENT.md`、本文件、已确认的 Source Runtime 迁移契约、`README.md`、其他 `docs/plans/`。不要引用已删除的 `docs/DEVELOPMENT_STANDARD.md`、`docs/RELEASE.md` 或 `docs/acp-contract.md`。
+当前事实来源按优先级为：正在运行的源码和测试、`package.json` 脚本、`.github/DEVELOPMENT.md`、本文件、已确认的 Source Runtime 迁移契约、`README.md`、其他 `docs/plans/`。文档角色与状态见 `docs/README.md` 和 `docs/plans/README.md`；不要引用已删除的 `docs/DEVELOPMENT_STANDARD.md`、`docs/RELEASE.md` 或 `docs/acp-contract.md`。
 
-English: Sources of truth, in order, are running source and tests, `package.json` scripts, `.github/DEVELOPMENT.md`, this file, the accepted Source Runtime migration contract, `README.md`, and other plans. Do not reference the removed `docs/DEVELOPMENT_STANDARD.md`, `docs/RELEASE.md`, or `docs/acp-contract.md`.
+English: Sources of truth, in order, are running source and tests, `package.json` scripts, `.github/DEVELOPMENT.md`, this file, the accepted Source Runtime migration contract, `README.md`, and other plans. See `docs/README.md` and `docs/plans/README.md` for document roles and status; do not reference the removed `docs/DEVELOPMENT_STANDARD.md`, `docs/RELEASE.md`, or `docs/acp-contract.md`.
 
 开发规范见 `.github/DEVELOPMENT.md`，实现前先阅读。 / Read `.github/DEVELOPMENT.md` before implementation.
 
@@ -161,6 +161,7 @@ src/modules/conversation/                    # message, attachment, tool, questi
 src/modules/composer/composer.tsx            # prompt, slash commands, upload, queue controls
 src/modules/workspace/changes-panel.tsx      # Changes / Files / Agents / Tasks shell
 src/modules/settings/settings-dialog.tsx     # theme, global config, config.toml, MCP
+src/modules/mcp/                             # structured MCP server list + add/edit dialog + advanced mcp.json editor
 src/lib/tool-events/                         # semantic tool registry, side effects, fallback data
 src-tauri/src/runtime/host.rs                # RuntimeHost singleton: supervisor, pump, session table/lease
 src-tauri/src/runtime/                      # supervisor.rs / client.rs / translate.rs / protocol.rs / codec.rs / readiness.rs

@@ -257,12 +257,12 @@ npm run build
 
 1. 已有领域模块能承载时，在该模块增加业务函数，例如 config 放 `global_config.rs`，文件放 `session_files.rs`，安全校验放 `security.rs`。
 2. 只有新能力确实独立时，创建 `src-tauri/src/<feature>.rs`，并在 `src-tauri/src/lib.rs` 添加 `pub mod <feature>;`。
-3. 不把读取文件、路径遍历、配置写入或复杂 runtime 协议调用直接堆进 `commands.rs`。
+3. 不把读取文件、路径遍历、配置写入或复杂 runtime 协议调用直接堆进 `commands/`。
 4. 涉及路径、URL、配置内容或凭据时，先复用/扩展 `security.rs` 校验；不要把未校验的前端字符串直接用于文件系统或进程调用。
 
 ### D2. 添加薄 command 包装
 
-在 `src-tauri/src/commands.rs` 添加 Tauri command。它只做参数接收、必要校验、调用领域函数和错误转换：
+在 `src-tauri/src/commands/` 的对应领域文件添加 Tauri command。它只做参数接收、必要校验、调用领域函数和错误转换；新领域先在 `commands/mod.rs` 声明模块：
 
 ```rust
 #[tauri::command]
@@ -390,7 +390,7 @@ npm run build
 npm run smoke:runtime
 ```
 
-`npm run smoke:runtime` 离线安全（临时 `KIMI_CODE_HOME`，不依赖本机 CLI 与登录）；真实桌面验收（M5）未执行时要写明，不能把自动化绿当作已验收。
+`npm run smoke:runtime` 离线安全（临时 `KIMI_CODE_HOME`，不依赖本机 CLI 与登录）；真实桌面验收未执行或仍有剩余场景时要写明，不能把自动化绿当作已验收。
 
 ### E5. 事件来源与回放的分流卡
 
@@ -417,7 +417,7 @@ npm run smoke:runtime
 | --- | --- |
 | 桌面展示、主题、界面偏好 | 前端状态/已有主题能力；确认是否需要持久化 |
 | Kimi Code 全局配置 | `global_config.rs`、`useGlobalConfig.ts`、`settings-dialog.tsx` |
-| `config.toml` 原文编辑 | `commands.rs` 的 config command + `src/lib/settings-api.ts` |
+| `config.toml` 原文编辑 | `commands/config.rs` 的 config command + `src/lib/settings-api.ts` |
 | MCP 配置 | `commands/config.rs` 的 MCP command（`mcp.json`）+ `src/lib/settings-api.ts` |
 | 只与单个会话相关的模式 | session state/会话 config 快照（`session_config.rs`），不放到全局 config |
 
@@ -473,7 +473,7 @@ git diff --check
 
 ```text
 Rust domain function/test
-  -> commands.rs wrapper
+  -> commands/<area>.rs wrapper
   -> lib.rs generate_handler registration
   -> tauri-api.ts wrapper/type
   -> hook/component call sites and mocks
@@ -550,4 +550,3 @@ Rust domain function/test
 6. 跑相邻 Vitest、变更文件 Biome、`npm run build` 与 `git diff --check`。没有原生逻辑时不要为了“完整”而跑或改 Rust。
 
 这个例子的关键是边界：功能越小，装配的层越少；“完整”指该功能的必要链路完整，而不是修改更多目录。
-

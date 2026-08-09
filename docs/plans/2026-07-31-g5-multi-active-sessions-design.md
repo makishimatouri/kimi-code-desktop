@@ -1,5 +1,7 @@
 # G5：多活跃会话架构设计
 
+> **文档状态（2026-08-09）：ACP 时代历史设计。** Source Runtime 切换后，当前 AppShell 只持有一个 active `useSessionStream`，RuntimeHost 负责会话表/lease；本文不得作为恢复多 ACP worker 或多前端 stream 的依据。
+
 | 项目 | 内容 |
 | --- | --- |
 | 状态 | **已实施**（2026-08-02）：Tauri Desktop 默认启用多活跃会话编排器；Web / 非 Tauri 仍使用单流。后续优化项见 §4 / §5 / §9 / §14。 |

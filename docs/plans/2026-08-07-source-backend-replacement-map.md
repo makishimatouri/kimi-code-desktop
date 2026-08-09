@@ -1,6 +1,6 @@
 # Source Backend 替换地图
 
-状态：已确认方向，待实施
+状态：已实施（M4 已完成；本文作为迁移对照表保留）
 日期：2026-08-07
 配套：架构决策见 `2026-08-07-source-backend-architecture.md`，验收见 `2026-08-07-ui-compatibility-checklist.md`
 

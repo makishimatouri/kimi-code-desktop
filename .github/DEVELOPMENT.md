@@ -10,7 +10,7 @@
 
 ## 1. 项目边界
 
-`codex/runtime-cutover` 已把 Kimi Code Desktop 从 CLI 外壳切换为源码自有产品：当前可执行代码是 Source Runtime（`runtime-v1`），只交付仓内源码构建的 Kimi Runtime，不再依赖安装的 CLI。
+`codex/runtime-cutover` 已完成并进入当前 `master` 基线：Kimi Code Desktop 已从 CLI 外壳切换为源码自有产品。当前可执行代码是 Source Runtime（`runtime-v1`），只交付仓内源码构建的 Kimi Runtime，不再依赖安装的 CLI。
 
 ```text
 React UI
@@ -26,7 +26,7 @@ React UI
 - Source Runtime 是唯一可执行基线：运行不依赖 PATH 上的 `kimi`，不留 ACP 入口；runtime artifact 缺失、握手失败或进程崩溃时 fail-closed，向用户显示可操作错误，绝不静默降级。
 - Source Runtime 的目录、协议、数据与发布契约以 `docs/plans/2026-08-08-runtime-cutover-m4.md` 与 `docs/plans/2026-08-07-source-backend-maintenance.md` 为准。
 - 不为后端尚未支持的能力制作假入口。
-- 自动化测试通过、代码已实现、真实 Tauri/WebView2 已验收是三个不同状态，交付时分别说明。
+- 自动化测试通过、代码已实现、真实 Tauri/WebView 已验收是三个不同状态，交付时分别说明。
 
 ## 2. 仓库结构
 
@@ -79,7 +79,7 @@ src-tauri/
 | 顶栏、状态栏 | `src/modules/topbar/`、`src/modules/statusbar/` |
 | 会话状态和 wire 编排 | `src/hooks/useSessions.ts`、`src/hooks/useSessionStream.ts` |
 | 前端 Tauri IPC | `src/lib/tauri-api.ts` |
-| 原生 IPC 注册 | `src-tauri/src/commands.rs`、`src-tauri/src/lib.rs` |
+| 原生 IPC 注册 | `src-tauri/src/commands/{mod,wire,sessions,config,auth,system}.rs`、`src-tauri/src/lib.rs` |
 
 ### 2.2 变更落点矩阵
 
@@ -90,7 +90,7 @@ src-tauri/
 | 新增共享类型或纯函数 | `src/lib/` | 是否会造成反向依赖或循环依赖 |
 | 新增 React 状态编排 | `src/hooks/` | cleanup、竞态、disabled/unmount 行为 |
 | 修改会话或 wire 行为 | `useSessionStream` 相关链路 | live、replay、store、语义 UI、fallback |
-| 新增 Tauri 命令 | 对应 Rust 模块 + `commands.rs` | `lib.rs` 注册、`tauri-api.ts`、调用方和测试 |
+| 新增 Tauri 命令 | 对应领域模块 + `commands/` 薄包装 | `lib.rs` 注册、`tauri-api.ts`、调用方和测试 |
 | 修改配置或 MCP | 前端 settings + 对应 Rust 配置模块 | 序列化、真实路径、安全写入 |
 | 修改检查或发布流程 | `scripts/`、`.github/workflows/` | `package.json` 脚本和发布文档 |
 
@@ -130,7 +130,7 @@ src/modules/<feature>/
 
    ```text
    Rust implementation/test
-     -> commands.rs IPC wrapper
+     -> commands/<area>.rs IPC wrapper
      -> lib.rs generate_handler registration
      -> src/lib/tauri-api.ts wrapper/type
      -> frontend caller/test
@@ -284,9 +284,16 @@ npx biome lint <changed-files>
 
 触及文件不得新增 lint 诊断。若文件原有诊断无法在本次安全清理，应在交付中明确记录，不要用提高阈值、禁用规则或整仓格式化掩盖。
 
-`npm run smoke:runtime` 构建 dist 后在临时 `KIMI_CODE_HOME` 走完整 runtime-v1 方法链，离线安全；浏览器 mock 不能替代真实桌面验收（M5）。
+`npm run smoke:runtime` 构建 dist 后在临时 `KIMI_CODE_HOME` 走完整 runtime-v1 方法链，离线安全；浏览器 mock 不能替代真实桌面验收。剩余场景按 `docs/plans/2026-07-18-webview2-acceptance.md` 执行。
 
-## 8. 提交前检查
+## 8. 文档维护
+
+- `docs/README.md` 与 `docs/plans/README.md` 负责标明文档角色和状态；新增计划时同步登记。
+- 当前规范、验收清单和入口文档必须随行为改动更新；历史计划与版本发布说明保留当时事实，不把旧 ACP/CLI 正文机械改写成 Source Runtime。
+- 外壳文档只写桌面特有内容；Kimi Code 配置、Slash Commands、MCP、快捷键与 CLI 参考链接到 `runtime/kimi-code/docs/zh` 或 `runtime/kimi-code/docs/en`。
+- 删除或移动文档后，搜索仓库内引用并检查相对 Markdown 链接。
+
+## 9. 提交前检查
 
 - 改动是否保持依赖方向，并符合 Source-Runtime-only、无生产双 backend 的约束？
 - 新文件是否放在职责正确的目录？

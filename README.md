@@ -16,7 +16,7 @@
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-111111" />
 </p>
 
-开发与提交约定见 [结构与开发规范](.github/DEVELOPMENT.md)。Source Runtime 的切换契约见 [Runtime Cutover M4](docs/plans/2026-08-08-runtime-cutover-m4.md)，架构决策见 [Source Backend 架构决策](docs/plans/2026-08-07-source-backend-architecture.md)。
+文档入口见 [文档导航](docs/README.md)，开发与提交约定见 [结构与开发规范](.github/DEVELOPMENT.md)。Source Runtime 的完成态见 [Runtime Cutover M4](docs/plans/2026-08-08-runtime-cutover-m4.md)，长期维护见 [Source Backend 维护策略](docs/plans/2026-08-07-source-backend-maintenance.md)。
 
 Kimi Code Desktop 将 Kimi Code 的智能体能力带进一个专注、可视、可管理的桌面界面。Kimi Code 源码以 git subtree 形式收在 `runtime/kimi-code`，构建为随应用交付的唯一 Runtime：不依赖用户安装的 CLI，也不使用 ACP 或生产双 backend。
 
@@ -135,7 +135,7 @@ src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Kimi Code.app
 - Runtime 随应用交付（source-built Kimi Code），不再需要安装或探测外部 CLI；模型与 provider 配置仍读取 `~/.kimi-code/config.toml`。
 - 当前提供手动深色 / 浅色切换；跟随系统主题尚未接入。
 - 引擎仅支持整会话 fork，`fork_session` 保持显式错误，桌面端不伪造 fork-at-turn 能力。
-- 自动化门禁与 `smoke:runtime` 已通过；真实 Tauri/WebView 可见验收（auth 真机、Swarm 卡片、桌面完成通知）与 SEA sidecar 发布链路属于 M5。
+- 自动化门禁与 `smoke:runtime` 已通过；macOS SEA sidecar、release manifest 和 Apple Silicon DMG 链路已交付。Windows SEA 变体、正式 Developer ID 签名/公证，以及 auth 真机、Swarm 卡片、桌面完成通知等剩余真实 Tauri/WebView 场景仍需按[桌面验收清单](docs/plans/2026-07-18-webview2-acceptance.md)完成并单独报告。
 
 ## License
 

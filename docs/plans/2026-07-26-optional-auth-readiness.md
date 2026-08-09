@@ -1,5 +1,7 @@
 # Optional Authentication Readiness Implementation Plan
 
+> **文档状态（2026-08-09）：已被 Source Runtime readiness 替代。** “登录可选”的产品原则仍可参考，但本文的 CLI/ACP 探测与文件路径不再是生产实现；当前 readiness 见 `src-tauri/src/runtime_check.rs` 与 M4 完成态。
+
 **Goal:** Make Kimi account login optional while preserving provider/API-key use, the settings login controls, and the ACP protocol handshake.
 
 **Architecture:** Runtime readiness checks only whether the installed Kimi CLI, ACP entry point, and configuration are usable. OAuth login remains an optional account-management action in Settings and is never rendered as a startup requirement. `kimi acp` still receives the protocol-required `authenticate` request because it succeeds for any credential source accepted by the CLI, including configured providers.

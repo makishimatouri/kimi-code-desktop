@@ -1,5 +1,7 @@
 # Thinking Effort Controls Implementation Plan
 
+> **文档状态（2026-08-09）：历史实施记录。** 本文用于追溯 Thinking effort 的产品与校验决策；当前模型能力和配置写入契约以运行源码与测试为准。
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Make forced Thinking controls visibly disabled and expose only the thinking-effort levels supported by the selected model.

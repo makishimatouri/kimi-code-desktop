@@ -1,5 +1,7 @@
 # Generic Send Feedback Implementation Plan
 
+> **文档状态（2026-08-09）：已实施的历史计划。** 通用发送反馈已迁移到 Source Runtime 主路径；正文中的 ACP 接线只保留为当时实现记录，当前行为以源码、测试和 M4 完成态为准。
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Make every prompt show an immediate sending indicator, replace it on the first visible response, and surface every terminal failure without model- or provider-specific logic.

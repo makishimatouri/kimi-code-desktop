@@ -1,6 +1,6 @@
 # Source Backend 架构决策
 
-状态：已确认方向，待实施
+状态：已实施（M4 已完成；完成态见 `2026-08-08-runtime-cutover-m4.md`）
 日期：2026-08-07
 替代：`docs/plans/2026-08-06-source-runtime-migration.md`（旧契约存档于 `origin/codex/source-runtime`，协议细节可回查，本文为准）
 
