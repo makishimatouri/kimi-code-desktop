@@ -771,6 +771,46 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   "Summarizes model calls across all sessions and agents in the selected period; cached tokens are counted again on every call and do not represent the current context size.":
     "汇总所选时间范围内全部会话与代理的模型调用；缓存 Token 会重复计入每次调用， 不代表当前上下文大小。",
   "Total input": "输入合计",
+  "Manage MCP servers: the form covers common fields; changes are written to the user-level mcp.json and idle sessions restart to apply them.":
+    "管理 MCP Server：表单维护常用字段，保存后写入用户级 mcp.json，空闲会话重启后生效。",
+  "Add server": "添加 Server",
+  "Add MCP server": "添加 MCP Server",
+  "Failed to parse mcp.json": "mcp.json 解析失败",
+  "Expand the advanced editor below to fix it manually; structured editing is unavailable until it parses.":
+    "请展开下方高级编辑器手动修复；修复前无法使用结构化编辑。",
+  'No MCP servers configured yet. Click "Add server" to connect your first tool service.':
+    "尚未配置 MCP Server。点击「添加 Server」接入第一个工具服务。",
+  "Advanced: edit the full mcp.json directly. JSON is validated locally before saving.":
+    "高级：直接编辑完整 mcp.json。保存前会在本地检查 JSON 格式。",
+  "(No command or URL set)": "（未设置命令或 URL）",
+  "Expand the advanced mcp.json editor (troubleshooting)": "展开高级 mcp.json 编辑器（排障）",
+  "Collapse the advanced mcp.json editor": "收起高级 mcp.json 编辑器",
+  Refresh: "刷新",
+  "Refreshing…": "刷新中…",
+  "Reading…": "读取中…",
+  "Read failed": "读取失败",
+  Enabled: "已启用",
+  Disabled: "已禁用",
+  "Saved to ~/.kimi-code/mcp.json; idle sessions restart to apply.":
+    "保存后写入 ~/.kimi-code/mcp.json，空闲会话重启后生效。",
+  Name: "名称",
+  "Tools will appear as mcp__<name>__<tool>": "工具将显示为 mcp__<名称>__<工具名>",
+  "e.g. filesystem": "例如 filesystem",
+  Transport: "传输方式",
+  "Launched by Kimi Code as a local subprocess": "本地命令，由 Kimi Code 以子进程启动",
+  "Connects to an already-running HTTP endpoint": "连接已在运行的 HTTP 端点",
+  "Legacy HTTP+SSE endpoint; prefer HTTP for new servers":
+    "旧式 HTTP+SSE 端点；新 server 优先用 HTTP",
+  Command: "启动命令",
+  "e.g. npx, uvx, or an absolute path to an executable": "例如 npx、uvx 或可执行文件的绝对路径",
+  "Arguments (one per line)": "参数（每行一个）",
+  "Environment variables (KEY=VALUE per line, optional)": "环境变量（每行 KEY=VALUE，可选）",
+  "Working directory (optional)": "工作目录（可选）",
+  "Headers (KEY=VALUE per line, optional)": "请求头（每行 KEY=VALUE，可选）",
+  "Bearer token environment variable (optional)": "Bearer Token 环境变量名（可选）",
+  "Reads the token from this environment variable so secrets stay out of the config file":
+    "从该环境变量读取 token，避免把密钥写进配置文件",
+  "Enable this server": "启用此 server",
 };
 
 const EN_US_RESTORE_TRANSLATIONS = Object.entries(ZH_CN_TRANSLATIONS).reduce<
