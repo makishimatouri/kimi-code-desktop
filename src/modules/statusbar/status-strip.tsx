@@ -1,4 +1,5 @@
 import {
+  Boxes,
   Check,
   ChevronDown,
   ClipboardList,
@@ -14,18 +15,12 @@ import {
 import { useEffect, useRef, useState } from "react";
 import type { TokenUsage } from "@/hooks/wireTypes";
 import { isActiveAgentStatus, useAgentMonitorStore } from "@/lib/agent-monitor/store";
-import type { GoalItem } from "@/lib/goal";
+import { GOAL_STATUS_LABELS, type GoalItem } from "@/lib/goal";
 import { cn } from "@/lib/utils";
 import { StatusPill } from "@/ui/status-pill";
 import { ContextRing } from "./context-ring";
 import type { PermissionMode } from "./permission-mode";
 
-const GOAL_STATUS_LABELS: Record<GoalItem["status"], string> = {
-  active: "运行中",
-  paused: "已暂停",
-  blocked: "已阻塞",
-  complete: "已完成",
-};
 const MODES: {
   key: PermissionMode;
   label: string;
@@ -59,6 +54,7 @@ export function StatusStrip({
   onGoalModeChange,
   onGoalControl,
   modeControlsDisabled,
+  permissionModeDisabled,
   contextUsage,
   tokenUsage,
   contextTokens = null,
@@ -75,6 +71,8 @@ export function StatusStrip({
   onGoalModeChange: (enabled: boolean) => void;
   onGoalControl?: (action: "pause" | "resume" | "cancel") => Promise<unknown>;
   modeControlsDisabled: boolean;
+  /** Permission pill only; defaults to modeControlsDisabled. Busy turns must keep it enabled (issue #13). */
+  permissionModeDisabled?: boolean;
   contextUsage: number;
   tokenUsage: TokenUsage | null;
   contextTokens?: number | null;
@@ -92,6 +90,7 @@ export function StatusStrip({
     (state) => state.tasks.filter((task) => isActiveAgentStatus(task.status)).length,
   );
   const current = MODES.find((m) => m.key === permissionMode) ?? MODES[0];
+  const permissionDisabled = permissionModeDisabled ?? modeControlsDisabled;
   const runGoalControl = (action: "pause" | "resume" | "cancel") => {
     if (!onGoalControl || goalControlPending) return;
     setGoalControlPending(action);
@@ -114,7 +113,8 @@ export function StatusStrip({
       <div ref={menuRef} className="relative">
         <StatusPill
           tone={permissionMode === "auto" ? "amber" : permissionMode === "yolo" ? "red" : "neutral"}
-          disabled={modeControlsDisabled}
+          disabled={permissionDisabled}
+          className="disabled:opacity-100"
           onClick={() => setMenuOpen((v) => !v)}
         >
           <current.icon size={12} strokeWidth={1.5} />
@@ -170,6 +170,7 @@ export function StatusStrip({
       <StatusPill
         on={planMode}
         disabled={modeControlsDisabled}
+        className="disabled:opacity-100"
         onClick={() => onPlanModeChange(!planMode)}
       >
         <ClipboardList size={12} strokeWidth={1.5} />
@@ -178,6 +179,7 @@ export function StatusStrip({
       <StatusPill
         on={swarmMode}
         disabled={modeControlsDisabled}
+        className="disabled:opacity-100"
         onClick={() => onSwarmModeChange(!swarmMode)}
       >
         <Boxes size={12} strokeWidth={1.5} />
@@ -186,6 +188,7 @@ export function StatusStrip({
       <StatusPill
         on={goalMode}
         disabled={modeControlsDisabled || currentGoal != null}
+        className="disabled:opacity-100"
         onClick={() => onGoalModeChange(!goalMode)}
         title={goalMode ? "取消下一条 Goal" : "将下一条消息作为 Goal"}
       >
@@ -260,35 +263,5 @@ export function StatusStrip({
         </span>
       </div>
     </div>
-  );
-}
-
-function Boxes(props: { size?: number; strokeWidth?: number; className?: string }) {
-  return (
-    <svg
-      width={props.size ?? 12}
-      height={props.size ?? 12}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={props.strokeWidth ?? 1.5}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={props.className}
-      aria-hidden="true"
-    >
-      <path d="M2.97 12.92A2 2 0 0 0 2 14.63v3.24a2 2 0 0 0 .97 1.71l3 1.8a2 2 0 0 0 2.06 0L12 19v-5.5l-5-3-4.03 2.42Z" />
-      <path d="m7 16.5-4.74-2.85" />
-      <path d="m7 16.5 5-3" />
-      <path d="M7 16.5v5.17" />
-      <path d="M12 13.5V19l3.97 2.38a2 2 0 0 0 2.06 0l3-1.8a2 2 0 0 0 .97-1.71v-3.24a2 2 0 0 0-.97-1.71L17 10.5l-5 3Z" />
-      <path d="m17 16.5-5-3" />
-      <path d="m17 16.5 4.74-2.85" />
-      <path d="M17 16.5v5.17" />
-      <path d="M7.97 4.42A2 2 0 0 0 7 6.13v3.24a2 2 0 0 0 .97 1.71l3 1.8a2 2 0 0 0 2.06 0L17 11.5v-5.5l-5-3-4.03 1.42Z" />
-      <path d="m12 8-4.74-2.85" />
-      <path d="m12 8 5-3" />
-      <path d="M12 8v5.17" />
-    </svg>
   );
 }

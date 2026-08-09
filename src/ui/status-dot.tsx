@@ -2,7 +2,12 @@ import { cn } from "@/lib/utils";
 
 export type StatusDotKind = "ok" | "error" | "running" | "suspended" | "idle";
 
-function normalize(status?: string): StatusDotKind {
+/**
+ * Map wire/runtime status strings to dot kinds. Shared by StatusDot, the
+ * session sidebars, and the agent/swarm tool cards; co-located here so the
+ * ui layer never depends on lib/swarm.
+ */
+export function statusToDotKind(status: string | undefined): StatusDotKind {
   switch (status) {
     case "ok":
     case "done":
@@ -21,6 +26,8 @@ function normalize(status?: string): StatusDotKind {
       return "running";
     case "suspended":
       return "suspended";
+    case "queued":
+      return "idle";
     default:
       return "idle";
   }
@@ -44,7 +51,7 @@ export function StatusDot({
   className?: string;
   title?: string;
 }) {
-  const kind = normalize(status);
+  const kind = statusToDotKind(status);
   return (
     <span
       role="img"

@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import type { GitDiffStats } from "../lib/api/models";
+import { normalizeGitDiffStats, type GitDiffStats } from "../lib/git-diff";
 import { getAuthHeader } from "../lib/auth";
 import { getApiBaseUrl } from "./utils";
 import { isTauri, getGitDiffStats as tauriGetGitDiffStats } from "../lib/tauri-api";
@@ -83,20 +83,7 @@ export function useGitDiffStats(sessionId: string | null): UseGitDiffStatsReturn
         }
 
         const data = await response.json();
-        // Convert snake_case to camelCase
-        return {
-          isGitRepo: Boolean(data.is_git_repo),
-          hasChanges: Boolean(data.has_changes ?? false),
-          totalAdditions: Number(data.total_additions ?? 0),
-          totalDeletions: Number(data.total_deletions ?? 0),
-          files: (data.files ?? []).map((f: Record<string, unknown>) => ({
-            path: String(f.path ?? ""),
-            additions: Number(f.additions ?? 0),
-            deletions: Number(f.deletions ?? 0),
-            status: f.status as "added" | "modified" | "deleted" | "renamed",
-          })),
-          error: data.error ?? null,
-        };
+        return normalizeGitDiffStats(data);
       })();
 
       sharedCache.set(sessionId, {
@@ -136,17 +123,14 @@ export function useGitDiffStats(sessionId: string | null): UseGitDiffStatsReturn
     }
   }, [sessionId]);
 
-  // Invalidate in-flight requests when session changes
+  // Session changes replace fetchStats, invalidating the prior request before
+  // the new session starts its initial fetch and polling loop.
   useEffect(() => {
     requestIdRef.current += 1;
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
     setStats(null);
     setError(null);
-  }, [sessionId]);
-
-  // Initial fetch and polling
-  useEffect(() => {
     fetchStats();
 
     const interval = setInterval(() => {

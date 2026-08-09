@@ -3,14 +3,14 @@ import { type Event, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   type AgentRuntimeCapabilities,
   normalizeAgentRuntimeCapabilities,
-} from "@/lib/acp-capabilities";
+} from "@/lib/runtime-capabilities";
 import type { GoalItem, GoalStatus } from "@/lib/goal";
+import { normalizeGitDiffStats, type GitDiffStats } from "@/lib/git-diff";
 import { normalizeProvidersOverview, type ProvidersOverview } from "@/lib/provider-overview-api";
 import { normalizeSessionConfigState, type SessionConfigState } from "@/lib/session-config-state";
 import { stripThinkMarkup } from "@/lib/utils";
 import type { WorkspaceFileEntry as SessionFileEntry } from "@/lib/workspace-file-entry";
 import type {
-  GitDiffStats,
   GlobalConfig,
   Session,
   SessionStatus,
@@ -38,10 +38,54 @@ export type UpdateTextConfigResponse = {
   skippedBusySessionIds?: string[];
 };
 
+export type ProviderCatalogSummary = {
+  id: string;
+  name: string;
+  modelCount: number;
+};
+
+export type ProviderCatalogModel = {
+  id: string;
+  name: string;
+  maxContextTokens: number;
+};
+
+export type ProviderCatalogEntry = {
+  providerId: string;
+  name: string;
+  models: ProviderCatalogModel[];
+};
+
 export type WireEventPayload = {
   session_id: string;
-  message: string;
+  message?: string;
+  messages?: string[];
 };
+
+/**
+ * Unified wire:message payload parser shared by the global orchestrator
+ * listener and per-session runtimes. Accepts the single-message shape
+ * `{ session_id, message }` and the batched shape `{ session_id, messages }`
+ * (array order is the wire order), and returns the expanded message list.
+ * Returns null for malformed payloads.
+ */
+export function parseWireEventPayload(
+  payload: unknown,
+): { sessionId: string; messages: string[] } | null {
+  if (typeof payload !== "object" || payload === null) return null;
+  const { session_id, message, messages } = payload as WireEventPayload;
+  if (typeof session_id !== "string") return null;
+  if (typeof message === "string") {
+    return { sessionId: session_id, messages: [message] };
+  }
+  if (
+    Array.isArray(messages) &&
+    messages.every((item): item is string => typeof item === "string")
+  ) {
+    return { sessionId: session_id, messages };
+  }
+  return null;
+}
 
 export type RuntimeReadinessCheck = {
   id: string;
@@ -284,8 +328,8 @@ export async function openInEditor(path: string, editor?: string): Promise<void>
 }
 
 export async function setNativeUiLanguage(language: "en-US" | "zh-CN"): Promise<void> {
-	if (!isTauri()) return;
-	return invoke<void>("set_native_ui_language", { language });
+  if (!isTauri()) return;
+  return invoke<void>("set_native_ui_language", { language });
 }
 
 export async function wireConnect(sessionId: string, connectionId: string): Promise<void> {
@@ -337,9 +381,10 @@ function normalizeWorkerStatusView(raw: Record<string, unknown>): WorkerStatusVi
 
 export function onWireMessage(sessionId: string, callback: (message: string) => void): () => void {
   return listenEvent("wire:message", (payload) => {
-    const eventPayload = payload as WireEventPayload | undefined;
-    if (eventPayload?.session_id === sessionId && typeof eventPayload.message === "string") {
-      callback(eventPayload.message);
+    const parsed = parseWireEventPayload(payload);
+    if (!parsed || parsed.sessionId !== sessionId) return;
+    for (const message of parsed.messages) {
+      callback(message);
     }
   });
 }
@@ -780,6 +825,57 @@ export async function getProvidersOverview(): Promise<ProvidersOverview> {
   return normalizeProvidersOverview(raw);
 }
 
+export async function listProviderCatalog(): Promise<ProviderCatalogSummary[]> {
+  if (!isTauri())
+    return Promise.reject(new Error("Provider catalog is only available in the desktop app."));
+  const raw = await invoke<Array<Record<string, unknown>>>("list_provider_catalog");
+  return raw.map((provider) => ({
+    id: String(provider.id ?? ""),
+    name: String(provider.name ?? provider.id ?? ""),
+    modelCount: Number(provider.modelCount ?? provider.model_count ?? 0),
+  }));
+}
+
+export async function getProviderCatalogEntry(providerId: string): Promise<ProviderCatalogEntry> {
+  if (!isTauri())
+    return Promise.reject(new Error("Provider catalog is only available in the desktop app."));
+  const raw = await invoke<Record<string, unknown>>("get_provider_catalog_entry", { providerId });
+  return {
+    providerId: String(raw.providerId ?? raw.provider_id ?? providerId),
+    name: String(raw.name ?? providerId),
+    models: ((raw.models as Array<Record<string, unknown>> | undefined) ?? []).map((model) => {
+      const capability = (model.capability as Record<string, unknown> | undefined) ?? {};
+      return {
+        id: String(model.id ?? ""),
+        name: String(model.name ?? model.id ?? ""),
+        maxContextTokens: Number(capability.max_context_tokens ?? capability.maxContextTokens ?? 0),
+      };
+    }),
+  };
+}
+
+export async function importProviderFromCatalog(args: {
+  providerId: string;
+  apiKey: string;
+  defaultModel?: string;
+  baseUrl?: string;
+}): Promise<UpdateTextConfigResponse> {
+  if (!isTauri())
+    return Promise.reject(new Error("Provider import is only available in the desktop app."));
+  const raw = await invoke<Record<string, unknown>>("import_provider_from_catalog", args);
+  return normalizeUpdateTextConfigResponse(raw);
+}
+
+export async function importProviderRegistry(args: {
+  registryUrl: string;
+  apiKey: string;
+}): Promise<UpdateTextConfigResponse> {
+  if (!isTauri())
+    return Promise.reject(new Error("Provider import is only available in the desktop app."));
+  const raw = await invoke<Record<string, unknown>>("import_provider_registry", args);
+  return normalizeUpdateTextConfigResponse(raw);
+}
+
 export async function updateConfigToml(content: string): Promise<UpdateTextConfigResponse> {
   if (!isTauri()) return Promise.reject(new Error("Not in Tauri"));
   const raw = await invoke<Record<string, unknown>>("update_config_toml", {
@@ -838,19 +934,7 @@ export async function getGitDiffStats(sessionId: string): Promise<GitDiffStats> 
   const data = await invoke<Record<string, unknown>>("get_git_diff_stats", {
     sessionId,
   });
-  return {
-    isGitRepo: Boolean(data.is_git_repo),
-    hasChanges: Boolean(data.has_changes),
-    totalAdditions: Number(data.total_additions ?? 0),
-    totalDeletions: Number(data.total_deletions ?? 0),
-    files: ((data.files as Array<Record<string, unknown>> | undefined) ?? []).map((file) => ({
-      path: String(file.path ?? ""),
-      additions: Number(file.additions ?? 0),
-      deletions: Number(file.deletions ?? 0),
-      status: file.status as "added" | "modified" | "deleted" | "renamed",
-    })),
-    error: typeof data.error === "string" ? data.error : undefined,
-  };
+  return normalizeGitDiffStats(data);
 }
 
 export async function sendNotification(title: string, body: string): Promise<void> {

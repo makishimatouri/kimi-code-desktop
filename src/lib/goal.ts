@@ -1,5 +1,13 @@
 export type GoalStatus = "active" | "paused" | "blocked" | "complete";
 
+/** Shared Chinese labels for goal lifecycle statuses. */
+export const GOAL_STATUS_LABELS: Record<GoalStatus, string> = {
+  active: "运行中",
+  paused: "已暂停",
+  blocked: "已阻塞",
+  complete: "已完成",
+};
+
 export type GoalBudget = {
   tokenBudget?: number;
   turnBudget?: number;

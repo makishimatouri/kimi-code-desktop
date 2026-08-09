@@ -2,13 +2,12 @@
 //!
 //! Never returns api keys, tokens, or other credential material.
 
-use crate::managed_usage;
+use crate::global_config;
+use crate::runtime::now_ms;
 use crate::runtime_check;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 const SECRET_FIELD_NAMES: &[&str] = &[
     "api_key",
@@ -22,27 +21,20 @@ const SECRET_FIELD_NAMES: &[&str] = &[
 ];
 
 #[derive(Clone, Debug, Default)]
-struct AcpAuthState {
+struct RuntimeAuthState {
     last_failure_at_ms: Option<u64>,
     last_failure_message: Option<String>,
 }
 
-static ACP_AUTH_STATE: Mutex<AcpAuthState> = Mutex::new(AcpAuthState {
+static RUNTIME_AUTH_STATE: Mutex<RuntimeAuthState> = Mutex::new(RuntimeAuthState {
     last_failure_at_ms: None,
     last_failure_message: None,
 });
 
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
-}
-
 fn sanitize_auth_message(message: &str) -> String {
     let mut sanitized = message.trim().to_string();
     if sanitized.is_empty() {
-        return "ACP authentication failed.".to_string();
+        return "Runtime authentication failed.".to_string();
     }
     let tokens: Vec<String> = sanitized.split_whitespace().map(str::to_string).collect();
     for token in tokens {
@@ -63,22 +55,22 @@ fn looks_like_secret(value: &str) -> bool {
         .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
 }
 
-pub fn record_acp_auth_failure(message: &str) {
+pub fn record_runtime_auth_failure(message: &str) {
     let sanitized = sanitize_auth_message(message);
-    if let Ok(mut state) = ACP_AUTH_STATE.lock() {
+    if let Ok(mut state) = RUNTIME_AUTH_STATE.lock() {
         state.last_failure_at_ms = Some(now_ms());
         state.last_failure_message = Some(sanitized);
     }
 }
 
-pub fn clear_acp_auth_failure() {
-    if let Ok(mut state) = ACP_AUTH_STATE.lock() {
-        *state = AcpAuthState::default();
+pub fn clear_runtime_auth_failure() {
+    if let Ok(mut state) = RUNTIME_AUTH_STATE.lock() {
+        *state = RuntimeAuthState::default();
     }
 }
 
-fn acp_auth_snapshot() -> Value {
-    let state = ACP_AUTH_STATE
+fn runtime_auth_snapshot() -> Value {
+    let state = RUNTIME_AUTH_STATE
         .lock()
         .map(|guard| guard.clone())
         .unwrap_or_default();
@@ -97,7 +89,7 @@ fn acp_auth_snapshot() -> Value {
 pub fn get_providers_overview() -> Result<Value, String> {
     let path = runtime_check::kimi_code_config_path()?;
     let path_string = path.to_string_lossy().to_string();
-    let parsed = load_config_toml(&path)?;
+    let parsed = global_config::load_config_toml_at(&path)?;
     let default_model = parsed
         .get("default_model")
         .and_then(toml::Value::as_str)
@@ -240,20 +232,9 @@ pub fn get_providers_overview() -> Result<Value, String> {
         "structureValid": structure_issues.is_empty(),
         "structureIssues": structure_issues,
         "providers": providers,
-        "kimiAccountCredentialsPresent": managed_usage::credentials_present(),
-        "acpAuth": acp_auth_snapshot(),
+        "kimiAccountCredentialsPresent": runtime_check::credentials_present(),
+        "runtimeAuth": runtime_auth_snapshot(),
     }))
-}
-
-fn load_config_toml(path: &std::path::Path) -> Result<toml::Value, String> {
-    if !path.exists() {
-        return Ok(toml::Value::Table(toml::map::Map::new()));
-    }
-    let content = fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
-    content
-        .parse::<toml::Value>()
-        .map_err(|e| format!("Invalid Kimi config TOML: {e}"))
 }
 
 fn build_provider_summary(
@@ -298,7 +279,7 @@ fn resolve_credential_status(
     provider_type: &str,
 ) -> (String, String) {
     let lowered_type = provider_type.trim().to_ascii_lowercase();
-    let kimi_login_present = managed_usage::credentials_present();
+    let kimi_login_present = runtime_check::credentials_present();
 
     if lowered_type == "kimi" && kimi_login_present {
         return (
@@ -543,17 +524,17 @@ model = "gpt-test"
     }
 
     #[test]
-    fn acp_auth_failure_snapshot_is_recorded_and_cleared() {
-        clear_acp_auth_failure();
-        record_acp_auth_failure("Kimi Code rejected the configured provider credentials.");
+    fn runtime_auth_failure_snapshot_is_recorded_and_cleared() {
+        clear_runtime_auth_failure();
+        record_runtime_auth_failure("Kimi Code rejected the configured provider credentials.");
         let overview = get_providers_overview().expect("overview loads");
-        assert_eq!(overview["acpAuth"]["status"], "failed");
-        assert!(overview["acpAuth"]["lastFailureMessage"]
+        assert_eq!(overview["runtimeAuth"]["status"], "failed");
+        assert!(overview["runtimeAuth"]["lastFailureMessage"]
             .as_str()
             .unwrap_or("")
             .contains("rejected"));
-        clear_acp_auth_failure();
+        clear_runtime_auth_failure();
         let cleared = get_providers_overview().expect("overview loads");
-        assert_eq!(cleared["acpAuth"]["status"], "unknown");
+        assert_eq!(cleared["runtimeAuth"]["status"], "unknown");
     }
 }

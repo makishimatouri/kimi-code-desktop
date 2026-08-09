@@ -10,21 +10,23 @@
 
 ## 1. 项目边界
 
-Kimi Code Desktop 是 Kimi Code CLI 的独立 Windows 桌面外壳，不是 CLI 源码树。
+`codex/runtime-cutover` 已完成并进入当前 `master` 基线：Kimi Code Desktop 已从 CLI 外壳切换为源码自有产品。当前可执行代码是 Source Runtime（`runtime-v1`），只交付仓内源码构建的 Kimi Runtime，不再依赖安装的 CLI。
 
 ```text
 React UI
   -> Tauri IPC / events
-     -> ACP process and session RPC
-        -> user-installed `kimi acp`
+     -> RuntimeSupervisor
+        -> source-built Kimi desktop runtime child
      -> local config, session history, files, and Git helpers
 ```
 
 必须保持：
 
-- 桌面运行时为 ACP-only，不恢复 Python sidecar 或旧 runtime fallback。
+- 运行时为 Source-Runtime-only；不恢复 Python sidecar，不保留 ACP/旧 runtime 的生产 fallback，也不发布双 backend。
+- Source Runtime 是唯一可执行基线：运行不依赖 PATH 上的 `kimi`，不留 ACP 入口；runtime artifact 缺失、握手失败或进程崩溃时 fail-closed，向用户显示可操作错误，绝不静默降级。
+- Source Runtime 的目录、协议、数据与发布契约以 `docs/plans/2026-08-08-runtime-cutover-m4.md` 与 `docs/plans/2026-08-07-source-backend-maintenance.md` 为准。
 - 不为后端尚未支持的能力制作假入口。
-- 自动化测试通过、代码已实现、真实 Tauri/WebView2 已验收是三个不同状态，交付时分别说明。
+- 自动化测试通过、代码已实现、真实 Tauri/WebView 已验收是三个不同状态，交付时分别说明。
 
 ## 2. 仓库结构
 
@@ -37,6 +39,7 @@ docs/
   releases/          发布记录
 public/               原样复制的静态资源
 scripts/              检查、冒烟测试、版本与发布脚本
+runtime/              固定 Kimi Code 源码与 source-built Desktop Runtime
 src/
   main.tsx            浏览器入口
   bootstrap.tsx       启动恢复与 React 挂载
@@ -76,7 +79,7 @@ src-tauri/
 | 顶栏、状态栏 | `src/modules/topbar/`、`src/modules/statusbar/` |
 | 会话状态和 wire 编排 | `src/hooks/useSessions.ts`、`src/hooks/useSessionStream.ts` |
 | 前端 Tauri IPC | `src/lib/tauri-api.ts` |
-| 原生 IPC 注册 | `src-tauri/src/commands.rs`、`src-tauri/src/lib.rs` |
+| 原生 IPC 注册 | `src-tauri/src/commands/{mod,wire,sessions,config,auth,system}.rs`、`src-tauri/src/lib.rs` |
 
 ### 2.2 变更落点矩阵
 
@@ -87,7 +90,7 @@ src-tauri/
 | 新增共享类型或纯函数 | `src/lib/` | 是否会造成反向依赖或循环依赖 |
 | 新增 React 状态编排 | `src/hooks/` | cleanup、竞态、disabled/unmount 行为 |
 | 修改会话或 wire 行为 | `useSessionStream` 相关链路 | live、replay、store、语义 UI、fallback |
-| 新增 Tauri 命令 | 对应 Rust 模块 + `commands.rs` | `lib.rs` 注册、`tauri-api.ts`、调用方和测试 |
+| 新增 Tauri 命令 | 对应领域模块 + `commands/` 薄包装 | `lib.rs` 注册、`tauri-api.ts`、调用方和测试 |
 | 修改配置或 MCP | 前端 settings + 对应 Rust 配置模块 | 序列化、真实路径、安全写入 |
 | 修改检查或发布流程 | `scripts/`、`.github/workflows/` | `package.json` 脚本和发布文档 |
 
@@ -127,7 +130,7 @@ src/modules/<feature>/
 
    ```text
    Rust implementation/test
-     -> commands.rs IPC wrapper
+     -> commands/<area>.rs IPC wrapper
      -> lib.rs generate_handler registration
      -> src/lib/tauri-api.ts wrapper/type
      -> frontend caller/test
@@ -205,12 +208,12 @@ lib     -> 平台 API 与第三方库
 - 保留现有导出或提供兼容层，先迁移调用方，再删除旧入口。
 - 文件名、导出名和目录风格跟随所在区域，不为统一命名批量重命名旧文件。
 
-## 4. 会话与 ACP 变更
+## 4. 会话与 Runtime 变更
 
-`useSessionStream` 是 live event 与 history replay 的前端统一入口。修改 wire、tool、media、subagent、steering、approval 或 status 行为时，必须核对完整链路：
+`useSessionStream` 是 live event 与 history replay 的前端统一入口，适配层是 Source Runtime（`src-tauri/src/runtime/`）。修改 wire、tool、media、subagent、steering、approval 或 status 行为时，必须核对完整链路：
 
 ```text
-wire type -> ACP translation -> live dispatch
+wire type -> runtime translation -> live dispatch
           -> persisted replay -> state/store -> semantic UI -> generic fallback
 ```
 
@@ -218,23 +221,35 @@ wire type -> ACP translation -> live dispatch
 
 - 一个应用壳只维护一个活动会话 stream。
 - 未知事件、未知工具和未知 display payload 必须保留可用 fallback。
-- session list/get/update/delete 是 ACP 数据、本地 metadata 与运行状态的组合，不按单一远程 CRUD 理解。
+- session list/get/update/delete 是 Runtime 数据、本地 metadata 与运行状态的组合，不按单一远程 CRUD 理解。
 - live 与 replay 的语义必须一致，不能只修其中一条路径。
+- turn 终态必须与 request/turn id 精确关联；不得靠事件时间或广泛清空完成新旧 turn 归属。
+- 新增接口必须能映射到已冻结的 `runtime-v1`，不要引入第二条运行链路或恢复 ACP 私有面。
 
 ## 5. Rust/Tauri 边界
 
 | 模块 | 职责 |
 | --- | --- |
-| `commands.rs` | 薄 IPC 入口、参数转换与调用编排 |
-| `acp.rs` | 每会话 ACP wire 进程 |
-| `acp_desktop.rs` | 非 wire 的共享 ACP session RPC |
-| `acp_translate.rs`、`wire_events.rs` | ACP 数据到前端 wire 语义的翻译 |
+| `commands/` | 薄 IPC 入口、参数转换与调用编排 |
+| `runtime/host.rs` | RuntimeHost 单例：supervisor 懒启动/重建、泵线程单点 emit、会话表/lease、控制通道 |
+| `runtime/translate.rs`（+ `translate/`）、`wire_events.rs` | Runtime 事件到前端 wire 语义的翻译 |
 | `session_store.rs` | 本地 metadata、wire history 与 replay |
 | `session_files.rs`、`git_diff.rs` | 当前会话工作区文件与 Git 数据 |
-| `global_config.rs`、`mcp_config.rs` | `~/.kimi-code` 配置 |
+| `global_config.rs` | `~/.kimi-code` 配置 |
 | `security.rs` | 路径与本地访问安全边界 |
 
-业务逻辑不得持续堆入 `commands.rs`。配置、登录、skills、usage、通知和 runtime readiness 应继续收口在各自模块。
+Source Runtime 模块：
+
+| 模块 | 职责 |
+| --- | --- |
+| `runtime/kimi-code/apps/desktop-runtime` | Kimi source adapter、stdio router 与 Runtime lifecycle |
+| `src-tauri/src/runtime/host.rs` | RuntimeHost 单例：supervisor 懒启动/重建、泵线程单点 emit、会话表/lease |
+| `src-tauri/src/runtime/supervisor.rs`（+ `pump.rs`） | source-built 子进程生命周期、请求表、超时和重启 |
+| `src-tauri/src/runtime/protocol.rs`（+ `codec.rs`） | `runtime-v1` envelope、codec 和版本协商 |
+| `src-tauri/src/runtime/translate.rs`（+ `translate/`） | Runtime event 到 Desktop wire 语义的翻译 |
+| `src-tauri/src/runtime/client.rs` / `readiness.rs` | 类型化方法调用 / artifact、manifest 与 handshake readiness |
+
+业务逻辑不得持续堆入 `commands/`。配置、登录、skills、usage、通知和 runtime readiness 应继续收口在各自模块。
 
 测试不得覆盖真实的 `~/.kimi-code` 凭据、配置或历史记录；使用测试环境和临时目录。
 
@@ -258,7 +273,7 @@ wire type -> ACP translation -> live dispatch
 | React UI 或 hook | 相关 Vitest + `npm run build` |
 | 跨多个前端模块 | `npm test` + `npm run build` |
 | Rust | `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` + `npm run rust:check` + `npm run rust:clippy` + `npm run rust:test` |
-| ACP runtime | 上述检查 + `npm run smoke:acp` |
+| Source Runtime | 上述检查 + `npm run smoke:runtime` |
 | 发布 | `npm run release:preflight`；需要 MSI 时运行 `npm run release:msi` |
 
 前端源码的历史 Biome 基线尚未清零。修改源码时至少运行：
@@ -269,11 +284,18 @@ npx biome lint <changed-files>
 
 触及文件不得新增 lint 诊断。若文件原有诊断无法在本次安全清理，应在交付中明确记录，不要用提高阈值、禁用规则或整仓格式化掩盖。
 
-`npm run smoke:acp` 需要可用的本地 CLI 和认证；浏览器 mock 不能替代真实桌面验收。
+`npm run smoke:runtime` 构建 dist 后在临时 `KIMI_CODE_HOME` 走完整 runtime-v1 方法链，离线安全；浏览器 mock 不能替代真实桌面验收。剩余场景按 `docs/plans/2026-07-18-webview2-acceptance.md` 执行。
 
-## 8. 提交前检查
+## 8. 文档维护
 
-- 改动是否保持依赖方向和 ACP-only 约束？
+- `docs/README.md` 与 `docs/plans/README.md` 负责标明文档角色和状态；新增计划时同步登记。
+- 当前规范、验收清单和入口文档必须随行为改动更新；历史计划与版本发布说明保留当时事实，不把旧 ACP/CLI 正文机械改写成 Source Runtime。
+- 外壳文档只写桌面特有内容；Kimi Code 配置、Slash Commands、MCP、快捷键与 CLI 参考链接到 `runtime/kimi-code/docs/zh` 或 `runtime/kimi-code/docs/en`。
+- 删除或移动文档后，搜索仓库内引用并检查相对 Markdown 链接。
+
+## 9. 提交前检查
+
+- 改动是否保持依赖方向，并符合 Source-Runtime-only、无生产双 backend 的约束？
 - 新文件是否放在职责正确的目录？
 - 是否保留 unknown、loading 和 error fallback？
 - 是否只修改任务需要的文件？

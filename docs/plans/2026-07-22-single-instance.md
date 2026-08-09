@@ -1,5 +1,7 @@
 # Desktop Single Instance Implementation Plan
 
+> **文档状态（2026-08-09）：已实施的历史计划。** 本文保留原始目标与验证步骤；后续修改应从当前 Tauri 配置、源码和开发规范重新确认。
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Prevent repeated desktop-shortcut launches from creating multiple Kimi Code processes and focus the existing main window instead.

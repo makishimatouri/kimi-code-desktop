@@ -1,7 +1,7 @@
 use crate::runtime_check;
 use serde_json::{json, Value};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 static PROVIDER_ENDPOINT_REPAIR_LOCK: Mutex<()> = Mutex::new(());
@@ -70,6 +70,21 @@ pub(crate) fn runtime_mode_defaults() -> Result<RuntimeModeDefaults, String> {
             .unwrap_or(false),
         permission_mode: normalized_permission_mode(&parsed),
     })
+}
+
+/// Whether the user explicitly owns the subagent timeout in `config.toml`.
+/// Desktop spawn defaults must not mask that choice (including `0`, which the
+/// source runtime accepts as an explicit value).
+pub(crate) fn has_configured_subagent_timeout() -> Result<bool, String> {
+    let parsed = load_config_toml()?;
+    Ok(config_has_subagent_timeout(&parsed))
+}
+
+fn config_has_subagent_timeout(parsed: &toml::Value) -> bool {
+    parsed
+        .get("subagent")
+        .and_then(toml::Value::as_table)
+        .is_some_and(|section| section.contains_key("timeout_ms"))
 }
 
 fn normalized_permission_mode(parsed: &toml::Value) -> String {
@@ -523,17 +538,23 @@ fn config_path() -> Result<PathBuf, String> {
     runtime_check::kimi_code_config_path()
 }
 
-fn load_config_toml() -> Result<toml::Value, String> {
-    let path = config_path()?;
+/// Parse a Kimi config.toml, tolerating a missing file as an empty table.
+/// Shared with the provider-overview reader (`provider_config.rs`) so the
+/// two parsers stay byte-identical.
+pub(crate) fn load_config_toml_at(path: &Path) -> Result<toml::Value, String> {
     if !path.exists() {
         return Ok(toml::Value::Table(toml::map::Map::new()));
     }
 
-    let content = fs::read_to_string(&path)
+    let content = fs::read_to_string(path)
         .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
     content
         .parse::<toml::Value>()
         .map_err(|e| format!("Invalid Kimi config TOML: {}", e))
+}
+
+fn load_config_toml() -> Result<toml::Value, String> {
+    load_config_toml_at(&config_path()?)
 }
 
 fn write_config_toml(path: &PathBuf, parsed: &toml::Value) -> Result<(), String> {
@@ -885,9 +906,15 @@ default_permission_mode = "unexpected"
     #[test]
     fn update_global_config_fields_rejects_unknown_model() {
         let parsed: toml::Value = SAMPLE_CONFIG.parse().expect("sample config parses");
-        let err =
-            update_fields_on_value(&parsed, Some("missing"), None, None, None, None, None, None)
-                .unwrap_err();
+        let err = update_fields_on_value(
+            &parsed,
+            Some("missing"),
+            None,
+            None,
+            None,
+            SecondaryModelConfigUpdate::default(),
+        )
+        .unwrap_err();
         assert!(err.contains("not found in config"));
     }
 
@@ -986,14 +1013,26 @@ capabilities = ["thinking"]
     #[test]
     fn update_global_config_fields_validates_thinking_effort() {
         let parsed: toml::Value = SAMPLE_CONFIG.parse().expect("sample config parses");
-        let updated =
-            update_fields_on_value(&parsed, None, None, Some("low"), None, None, None, None)
-                .expect("supported effort succeeds");
+        let updated = update_fields_on_value(
+            &parsed,
+            None,
+            None,
+            Some("low"),
+            None,
+            SecondaryModelConfigUpdate::default(),
+        )
+        .expect("supported effort succeeds");
         assert_eq!(updated["thinking_effort"], "low");
 
-        let err =
-            update_fields_on_value(&parsed, None, None, Some("medium"), None, None, None, None)
-                .expect_err("unsupported effort is rejected");
+        let err = update_fields_on_value(
+            &parsed,
+            None,
+            None,
+            Some("medium"),
+            None,
+            SecondaryModelConfigUpdate::default(),
+        )
+        .expect_err("unsupported effort is rejected");
         assert!(err.contains("not supported by model 'kimi'"));
     }
 
@@ -1006,9 +1045,15 @@ capabilities = ["thinking"]
         .parse()
         .expect("sample config parses");
 
-        let updated =
-            update_fields_on_value(&parsed, Some("fast"), None, None, None, None, None, None)
-                .expect("model switch succeeds");
+        let updated = update_fields_on_value(
+            &parsed,
+            Some("fast"),
+            None,
+            None,
+            None,
+            SecondaryModelConfigUpdate::default(),
+        )
+        .expect("model switch succeeds");
         assert_eq!(updated["default_model"], "fast");
         assert_eq!(updated["thinking_effort"], "low");
     }
@@ -1160,9 +1205,7 @@ max_context_size = 128000
         default_thinking: Option<bool>,
         thinking_effort: Option<&str>,
         default_plan_mode: Option<bool>,
-        secondary_model: Option<&str>,
-        secondary_default_effort: Option<&str>,
-        secondary_model_experiment_enabled: Option<bool>,
+        secondary_model: SecondaryModelConfigUpdate<'_>,
     ) -> Result<Value, String> {
         let mut next = parsed.clone();
         update_global_config_value(
@@ -1171,11 +1214,7 @@ max_context_size = 128000
             default_thinking,
             thinking_effort,
             default_plan_mode,
-            SecondaryModelConfigUpdate {
-                model: secondary_model,
-                default_effort: secondary_default_effort,
-                experiment_enabled: secondary_model_experiment_enabled,
-            },
+            secondary_model,
         )?;
         Ok(build_global_config_json(&next))
     }
@@ -1206,8 +1245,18 @@ max_context_size = 128000
             ("KIMI_CODE_EXPERIMENTAL_FLAG", None),
             ("KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL", None),
         ]);
-        let err = update_fields_on_value(&parsed, None, None, None, None, Some("kimi"), None, None)
-            .expect_err("experiment gate blocks writes");
+        let err = update_fields_on_value(
+            &parsed,
+            None,
+            None,
+            None,
+            None,
+            SecondaryModelConfigUpdate {
+                model: Some("kimi"),
+                ..SecondaryModelConfigUpdate::default()
+            },
+        )
+        .expect_err("experiment gate blocks writes");
         assert!(err.contains("EXPERIMENTAL"));
     }
 
@@ -1310,9 +1359,19 @@ default_effort = "high"
         .parse()
         .expect("sample config parses");
 
-        let updated =
-            update_fields_on_value(&parsed, None, None, None, None, Some(""), None, Some(false))
-                .expect("disable succeeds");
+        let updated = update_fields_on_value(
+            &parsed,
+            None,
+            None,
+            None,
+            None,
+            SecondaryModelConfigUpdate {
+                model: Some(""),
+                experiment_enabled: Some(false),
+                ..SecondaryModelConfigUpdate::default()
+            },
+        )
+        .expect("disable succeeds");
         assert_eq!(updated["secondary_model_experiment_enabled"], false);
         assert_eq!(updated["secondary_model_configured"], false);
 
@@ -1339,5 +1398,15 @@ default_effort = "high"
             Some(true)
         );
         assert!(on_disk_shape.get("secondary_model").is_none());
+    }
+
+    #[test]
+    fn detects_explicit_subagent_timeout_without_inventing_a_default() {
+        let empty: toml::Value = "".parse().expect("empty config");
+        let configured: toml::Value = "[subagent]\ntimeout_ms = 0\n"
+            .parse()
+            .expect("subagent config");
+        assert!(!config_has_subagent_timeout(&empty));
+        assert!(config_has_subagent_timeout(&configured));
     }
 }

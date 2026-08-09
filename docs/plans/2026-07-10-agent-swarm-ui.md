@@ -1,5 +1,7 @@
 # Agent Swarm UI Implementation Plan
 
+> **文档状态（2026-08-09）：历史实施记录。** 本文的 ACP 文件路径和命令已被 Source Runtime 切换替代；当前完成态与剩余真实桌面验收以 [`2026-08-08-runtime-cutover-m4.md`](2026-08-08-runtime-cutover-m4.md) 和 [`README.md`](README.md) 为准。
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Add a real per-session Swarm mode plus live multi-agent summaries in chat and detailed monitoring in the existing Workspace panel.

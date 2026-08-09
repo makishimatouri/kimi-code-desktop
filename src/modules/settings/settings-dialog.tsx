@@ -1,23 +1,22 @@
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { useCustomSubagentsEnabled } from "@/hooks/useCustomSubagents";
 import { useTheme } from "@/hooks/use-theme";
+import { useCustomSubagentsEnabled } from "@/hooks/useCustomSubagents";
 import { useGlobalConfig } from "@/hooks/useGlobalConfig";
 import {
-  notifyGlobalConfigApplied,
-  notifySecondaryModelApplied,
-  notifyTextConfigSaved,
-} from "@/lib/config-update-toast";
-import { useI18n, type UiLanguage } from "@/lib/i18n";
-import { openExternalHttpUrl, openKimiCodeWebsite } from "@/lib/kimi-code-link";
-import {
+  CLI_DOWNLOAD_FALLBACK,
+  type ComponentUpdateResult,
   checkAllUpdates,
   checkCliUpdate,
   checkDesktopUpdate,
-  CLI_DOWNLOAD_FALLBACK,
   DESKTOP_DOWNLOAD_FALLBACK,
-  type ComponentUpdateResult,
 } from "@/lib/check-updates";
+import {
+  notifyGlobalConfigApplied,
+  notifySecondaryModelApplied,
+} from "@/lib/config-update-toast";
+import { type UiLanguage, useI18n } from "@/lib/i18n";
+import { openExternalHttpUrl, openKimiCodeWebsite } from "@/lib/kimi-code-link";
 import {
   findConfigModel,
   modelForcesThinking,
@@ -29,22 +28,23 @@ import {
   secondaryModelEffectHint,
   shouldShowSecondaryModelSettings,
 } from "@/lib/secondary-model";
-import {
-  getConfigTomlFile,
-  getMcpConfigFile,
-  updateConfigTomlFile,
-  updateMcpConfigFile,
-} from "@/lib/settings-api";
-import type { UpdateTextConfigResponse } from "@/lib/tauri-api";
+import { getConfigTomlFile, updateConfigTomlFile } from "@/lib/settings-api";
 import { getAppVersion, getKimiCliVersion } from "@/lib/tauri-api";
 import { cn } from "@/lib/utils";
 import { desktopVersion, resolveKimiCliVersion } from "@/lib/version";
+import { McpPanel } from "@/modules/mcp/mcp-panel";
+import { ProviderModelEditor } from "@/modules/providers/provider-model-editor";
+import { ProvidersPanel } from "@/modules/providers/providers-panel";
 import { Button } from "@/ui/button";
+import { useConfirm } from "@/ui/confirm-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/ui/dialog";
 import { Switch } from "@/ui/switch";
-import { UsagePanel } from "./usage-panel";
 import { KimiLoginPanel } from "./kimi-login-panel";
-import { ProvidersPanel } from "@/modules/providers/providers-panel";
+import { TextConfigEditor } from "./text-config-editor";
+import { UsagePanel } from "./usage-panel";
+
+// Re-exported for the existing settings-dialog tests and external callers.
+export { TextConfigEditor };
 
 export type SettingsTab = "general" | "config" | "mcp" | "usage" | "about";
 
@@ -125,120 +125,6 @@ function VersionRow({
   );
 }
 
-function TextConfigEditor({
-  enabled,
-  label,
-  description,
-  language,
-  load,
-  save,
-  onDirtyChange,
-}: {
-  enabled: boolean;
-  label: string;
-  description: string;
-  language: "toml" | "json";
-  load: () => Promise<{ content: string; path: string }>;
-  save: (content: string) => Promise<UpdateTextConfigResponse>;
-  onDirtyChange: (dirty: boolean) => void;
-}) {
-  const [content, setContent] = useState("");
-  const [savedContent, setSavedContent] = useState("");
-  const [path, setPath] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    onDirtyChange(content !== savedContent);
-  }, [content, onDirtyChange, savedContent]);
-
-  useEffect(() => {
-    if (!enabled) return;
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    void load()
-      .then((file) => {
-        if (cancelled) return;
-        setContent(file.content);
-        setSavedContent(file.content);
-        setPath(file.path);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [enabled, load]);
-
-  const handleSave = async () => {
-    setError(null);
-    if (language === "json") {
-      try {
-        JSON.parse(content);
-      } catch (err) {
-        setError(`JSON 格式错误：${err instanceof Error ? err.message : String(err)}`);
-        return;
-      }
-    }
-    setSaving(true);
-    try {
-      const resp = await save(content);
-      if (!resp.success) {
-        throw new Error(resp.error || `保存 ${label} 失败`);
-      }
-      setSavedContent(content);
-      notifyTextConfigSaved(resp, `${label} 已保存`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="flex h-full min-h-0 flex-1 flex-col">
-      <div className="mb-3 shrink-0">
-        <p className="text-[12.5px] text-foreground">{description}</p>
-        <p className="mt-1 truncate font-mono text-[10px] text-faint">{path || "读取中…"}</p>
-      </div>
-      {loading ? (
-        <p className="py-12 text-center font-mono text-[11px] text-faint">加载中…</p>
-      ) : (
-        <textarea
-          value={content}
-          onChange={(event) => setContent(event.target.value)}
-          spellCheck={false}
-          disabled={saving}
-          className="min-h-0 w-full flex-1 resize-none rounded-r2 border border-line bg-background p-3 font-mono text-[11px] leading-relaxed text-foreground outline-none focus:border-line-strong disabled:opacity-60"
-        />
-      )}
-      {error && (
-        <p className="mt-2 shrink-0 whitespace-pre-wrap font-mono text-[10.5px] text-danger">
-          {error}
-        </p>
-      )}
-      <div className="mt-3 flex shrink-0 items-center">
-        <span className="font-mono text-[10px] text-faint">
-          {content === savedContent ? "没有未保存的更改" : "有未保存的更改"}
-        </span>
-        <Button
-          className="ml-auto"
-          disabled={loading || saving || content === savedContent}
-          onClick={() => void handleSave()}
-        >
-          {saving ? "保存中…" : `保存 ${label}`}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
 export function SettingsDialog({
   open,
   onOpenChange,
@@ -251,16 +137,18 @@ export function SettingsDialog({
 }) {
   const { resolvedLanguage, uiLanguage, setUiLanguage, t } = useI18n();
   const { theme, setThemeWithTransition } = useTheme();
+  const confirm = useConfirm();
   const {
     enabled: customSubagentsEnabled,
     setEnabled: setCustomSubagentsEnabled,
   } = useCustomSubagentsEnabled();
   const { config, isLoading, isUpdating, error, update } = useGlobalConfig({ enabled: open });
   const [tab, setTab] = useState<SettingsTab>("general");
-  const [dirtyTabs, setDirtyTabs] = useState<Record<"config" | "mcp", boolean>>({
-    config: false,
-    mcp: false,
+  const [configEditorDirty, setConfigEditorDirty] = useState({
+    raw: false,
+    structured: false,
   });
+  const [mcpEditorDirty, setMcpEditorDirty] = useState(false);
   const [cliVersion, setCliVersion] = useState("—");
   const [appVersion, setAppVersion] = useState(desktopVersion);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
@@ -286,27 +174,37 @@ export function SettingsDialog({
     [config?.models, config?.secondaryModel],
   );
   const secondarySupportedEfforts = modelThinkingEfforts(selectedSecondaryModel);
-  const currentEditorDirty = (tab === "config" || tab === "mcp") && dirtyTabs[tab];
+  const currentEditorDirty =
+    tab === "config"
+      ? configEditorDirty.raw || configEditorDirty.structured
+      : tab === "mcp"
+        ? mcpEditorDirty
+        : false;
 
-  const confirmDiscardCurrentEditor = () =>
+  const confirmDiscardCurrentEditor = async () =>
     !currentEditorDirty ||
-    window.confirm(
+    (await confirm(
       resolvedLanguage === "zh-CN"
         ? "当前文件有未保存的更改，确定放弃吗？"
         : "The current file has unsaved changes. Discard them?",
-    );
+    ));
 
-  const changeTab = (nextTab: SettingsTab) => {
-    if (nextTab === tab || !confirmDiscardCurrentEditor()) return;
-    if (tab === "config" || tab === "mcp") {
-      setDirtyTabs((current) => ({ ...current, [tab]: false }));
+  const changeTab = async (nextTab: SettingsTab) => {
+    if (nextTab === tab || !(await confirmDiscardCurrentEditor())) return;
+    if (tab === "config") {
+      setConfigEditorDirty({ raw: false, structured: false });
+    } else if (tab === "mcp") {
+      setMcpEditorDirty(false);
     }
     setTab(nextTab);
   };
 
-  const handleOpenChange = (nextOpen: boolean) => {
-    if (!nextOpen && !confirmDiscardCurrentEditor()) return;
-    if (!nextOpen) setDirtyTabs({ config: false, mcp: false });
+  const handleOpenChange = async (nextOpen: boolean) => {
+    if (!nextOpen && !(await confirmDiscardCurrentEditor())) return;
+    if (!nextOpen) {
+      setConfigEditorDirty({ raw: false, structured: false });
+      setMcpEditorDirty(false);
+    }
     onOpenChange(nextOpen);
   };
 
@@ -545,7 +443,7 @@ export function SettingsDialog({
               <button
                 key={item.id}
                 type="button"
-                onClick={() => changeTab(item.id)}
+                onClick={() => void changeTab(item.id)}
                 className={cn(
                   "w-full rounded-r1 px-2.5 py-2 text-left text-[12px] transition-colors",
                   tab === item.id
@@ -834,6 +732,14 @@ export function SettingsDialog({
             {tab === "config" && (
               <ProvidersPanel
                 enabled={open && tab === "config"}
+                advancedEditorDirty={configEditorDirty.raw}
+                onAdvancedEditorDiscard={() =>
+                  setConfigEditorDirty((current) => ({ ...current, raw: false }))
+                }
+                structuredEditorDirty={configEditorDirty.structured}
+                onStructuredEditorDiscard={() =>
+                  setConfigEditorDirty((current) => ({ ...current, structured: false }))
+                }
                 advancedEditor={
                   <TextConfigEditor
                     enabled={open && tab === "config"}
@@ -843,8 +749,20 @@ export function SettingsDialog({
                     load={getConfigTomlFile}
                     save={updateConfigTomlFile}
                     onDirtyChange={(dirty) =>
-                      setDirtyTabs((current) =>
-                        current.config === dirty ? current : { ...current, config: dirty },
+                      setConfigEditorDirty((current) =>
+                        current.raw === dirty ? current : { ...current, raw: dirty },
+                      )
+                    }
+                  />
+                }
+                structuredEditor={
+                  <ProviderModelEditor
+                    enabled={open && tab === "config"}
+                    onDirtyChange={(dirty) =>
+                      setConfigEditorDirty((current) =>
+                        current.structured === dirty
+                          ? current
+                          : { ...current, structured: dirty },
                       )
                     }
                   />
@@ -852,19 +770,7 @@ export function SettingsDialog({
               />
             )}
             {tab === "mcp" && (
-              <TextConfigEditor
-                enabled={open && tab === "mcp"}
-                label="mcp.json"
-                language="json"
-                description="管理 MCP Server 配置。保存前会在本地检查 JSON 格式。"
-                load={getMcpConfigFile}
-                save={updateMcpConfigFile}
-                onDirtyChange={(dirty) =>
-                  setDirtyTabs((current) =>
-                    current.mcp === dirty ? current : { ...current, mcp: dirty },
-                  )
-                }
-              />
+              <McpPanel enabled={open && tab === "mcp"} onDirtyChange={setMcpEditorDirty} />
             )}
             {tab === "usage" && <UsagePanel enabled={open && tab === "usage"} />}
             {tab === "about" && (

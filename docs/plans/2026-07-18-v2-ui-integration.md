@@ -1,5 +1,7 @@
 # V2 UI Integration Implementation Plan
 
+> **文档状态（2026-08-09）：历史实施基线。** V2 主路径已落地，本文中的 ACP 路径和旧文件名不再适用；剩余差距按当前根 `AGENTS.md`、[`2026-08-07-ui-compatibility-checklist.md`](2026-08-07-ui-compatibility-checklist.md) 与真实桌面验收清单继续检查。
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Restore the event, tool, workspace, composer, session, settings, and native UI capabilities that were intentionally deferred by the Monochrome V2 rewrite while preserving the new visual system and the ACP-only runtime.

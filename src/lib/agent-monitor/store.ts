@@ -28,8 +28,10 @@ export interface AgentTask {
   text?: string;
   subagentPhase?: string;
   parentToolCallId?: string;
+  parentAgentId?: string;
   suspendedReason?: string;
   swarmIndex?: number;
+  swarmDepth?: number;
   runInBackground?: boolean;
   /** Bound model alias when runtime events provide it. */
   boundModel?: string;
@@ -153,7 +155,6 @@ export function getSwarmMembers(
 
 export type AgentMonitorStore = {
   tasks: AgentTask[];
-  selectedTaskId: string | null;
   upsertTask: (task: AgentTask) => void;
   updateTask: (id: string, patch: Partial<AgentTask>, sessionId?: string) => void;
   completeTask: (
@@ -162,10 +163,7 @@ export type AgentMonitorStore = {
     currentStep?: string,
     sessionId?: string,
   ) => void;
-  selectTask: (id: string | null) => void;
   clearSession: (sessionId: string) => void;
-  cancelTask: (id: string) => void;
-  cancelAll: () => void;
 };
 
 function matchesTask(task: AgentTask, id: string, sessionId?: string): boolean {
@@ -174,7 +172,6 @@ function matchesTask(task: AgentTask, id: string, sessionId?: string): boolean {
 
 export const useAgentMonitorStore = create<AgentMonitorStore>((set) => ({
   tasks: [],
-  selectedTaskId: null,
   upsertTask: (task) =>
     set((state) => {
       const index = state.tasks.findIndex((entry) => matchesTask(entry, task.id, task.sessionId));
@@ -204,50 +201,10 @@ export const useAgentMonitorStore = create<AgentMonitorStore>((set) => ({
           : task,
       ),
     })),
-  selectTask: (id) => set({ selectedTaskId: id }),
   clearSession: (sessionId) =>
-    set((state) => {
-      const removedIds = new Set(
-        state.tasks
-          .filter(
-            (task) => task.sessionId === sessionId || task.sessionId === UNSCOPED_AGENT_SESSION_ID,
-          )
-          .map((task) => task.id),
-      );
-      return {
-        tasks: state.tasks.filter(
-          (task) => task.sessionId !== sessionId && task.sessionId !== UNSCOPED_AGENT_SESSION_ID,
-        ),
-        selectedTaskId:
-          state.selectedTaskId && removedIds.has(state.selectedTaskId)
-            ? null
-            : state.selectedTaskId,
-      };
-    }),
-  cancelTask: (id) =>
     set((state) => ({
-      tasks: state.tasks.map((task) =>
-        task.id === id && isActiveAgentStatus(task.status)
-          ? {
-              ...task,
-              status: "cancelled" as const,
-              completedAt: Date.now(),
-              currentStep: "Cancelled",
-            }
-          : task,
-      ),
-    })),
-  cancelAll: () =>
-    set((state) => ({
-      tasks: state.tasks.map((task) =>
-        isActiveAgentStatus(task.status)
-          ? {
-              ...task,
-              status: "cancelled" as const,
-              completedAt: Date.now(),
-              currentStep: "Cancelled",
-            }
-          : task,
+      tasks: state.tasks.filter(
+        (task) => task.sessionId !== sessionId && task.sessionId !== UNSCOPED_AGENT_SESSION_ID,
       ),
     })),
 }));

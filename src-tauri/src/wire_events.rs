@@ -36,7 +36,10 @@ pub struct WorkerStatusView {
 #[derive(Clone, Debug, Serialize)]
 struct WireMessagePayload {
     session_id: String,
-    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    messages: Option<Vec<String>>,
 }
 
 pub(crate) fn emit_wire_message(app: &AppHandle, session_id: &str, message: String) {
@@ -44,7 +47,8 @@ pub(crate) fn emit_wire_message(app: &AppHandle, session_id: &str, message: Stri
         WIRE_EVENT_NAME,
         WireMessagePayload {
             session_id: session_id.to_string(),
-            message,
+            message: Some(message),
+            messages: None,
         },
     );
 }

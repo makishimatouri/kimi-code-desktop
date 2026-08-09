@@ -100,9 +100,6 @@ function createConfig(): Configuration {
   });
 }
 
-// Lazy-initialized API client that creates config on first access
-let _apiClient: typeof apiClient | null = null;
-
 export const apiClient = {
   get config() {
     return new ConfigApi(createConfig());

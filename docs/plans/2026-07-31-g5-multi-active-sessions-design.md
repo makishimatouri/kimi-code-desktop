@@ -1,5 +1,7 @@
 # G5：多活跃会话架构设计
 
+> **文档状态（2026-08-09）：ACP 时代历史设计。** Source Runtime 切换后，当前 AppShell 只持有一个 active `useSessionStream`，RuntimeHost 负责会话表/lease；本文不得作为恢复多 ACP worker 或多前端 stream 的依据。
+
 | 项目 | 内容 |
 | --- | --- |
 | 状态 | **已实施**（2026-08-02）：Tauri Desktop 默认启用多活跃会话编排器；Web / 非 Tauri 仍使用单流。后续优化项见 §4 / §5 / §9 / §14。 |
@@ -20,7 +22,7 @@
 
 - 多窗口（与 `tauri-plugin-single-instance` 冲突，另立项）
 - `fork-at-turn` UI（`fork_session` 当前明确返回不支持；无 `session/fork` 稳定契约前不设计假入口）
-- 第二条竞争性 ACP RPC 通道（遵守 [acp-rpc-ownership.md](../acp-rpc-ownership.md)）
+- 第二条竞争性 ACP RPC 通道（原约定文档 `acp-rpc-ownership.md` 已随 ACP 移除删除，该条目不再适用）
 - **Web 版单流**（见 §1.1）：G5 仅交付 Tauri Desktop；浏览器构建保持现有单 `useSessionStream` 行为
 
 ### 1.1 平台范围（P2）

@@ -49,6 +49,7 @@ describe("derivePendingApprovals", () => {
           description: "x",
           sender: "kimi",
           toolKind: "execute",
+          toolCallId: "tc-r1",
         },
       },
     } as LiveMessage;
@@ -60,7 +61,7 @@ describe("derivePendingApprovals", () => {
         title: "Bash",
         type: "tool-Bash" as never,
         state: "approval-requested",
-        approval: { id: "r2", action: "Bash", description: "x", sender: "kimi", resolved: true },
+        approval: { id: "r2", action: "Bash", description: "x", sender: "kimi", resolved: true, toolCallId: "tc-r2" },
       },
     } as LiveMessage;
     const list = derivePendingApprovals([pending, resolved]);

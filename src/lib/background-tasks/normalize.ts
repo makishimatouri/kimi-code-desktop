@@ -3,34 +3,13 @@ import {
   isBackgroundTaskObservationTool,
   isCronObservationTool,
 } from "@/lib/tool-events/tool-registry";
+import { asRecord, readScannedBoolean, readTrimmedString, type UnknownRecord } from "@/lib/wire-utils";
 import type {
   BackgroundTaskObservedPayload,
   ObservedBackgroundTask,
   ObservedBackgroundTaskState,
   ObservedCronSchedule,
 } from "./types";
-
-type UnknownRecord = Record<string, unknown>;
-
-function asRecord(value: unknown): UnknownRecord {
-  return value !== null && typeof value === "object" ? (value as UnknownRecord) : {};
-}
-
-function readString(record: UnknownRecord, ...keys: string[]): string | undefined {
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
-  return undefined;
-}
-
-function readBoolean(record: UnknownRecord, ...keys: string[]): boolean | undefined {
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === "boolean") return value;
-  }
-  return undefined;
-}
 
 export function normalizeObservedTaskState(
   input: unknown,
@@ -97,7 +76,7 @@ export function extractOutputPathFromText(text: string): string | undefined {
 }
 
 function taskIdFromArgs(args: UnknownRecord): string | undefined {
-  return readString(args, "task_id", "taskId", "id");
+  return readTrimmedString(args, "task_id", "taskId", "id");
 }
 
 function parseCronCreateSnapshot(text: string): Partial<ObservedCronSchedule> {
@@ -175,7 +154,7 @@ export function buildObservedBackgroundTask(args: {
 
   const outputPath = extractOutputPathFromText(snapshot);
   const terminalState = normalizeObservedTaskState(
-    readString(parsedArgs, "status", "state"),
+    readTrimmedString(parsedArgs, "status", "state"),
     args.isError,
     args.inProgress,
   );
@@ -318,7 +297,7 @@ export function parseBackgroundSpawnFromToolResult(args: {
       parsedArgs = {};
     }
   }
-  const runInBackground = readBoolean(parsedArgs, "run_in_background", "runInBackground") === true;
+  const runInBackground = readScannedBoolean(parsedArgs, "run_in_background", "runInBackground") === true;
   const presentation = getToolPresentation(args.toolName);
   if (
     !runInBackground ||
@@ -335,7 +314,7 @@ export function parseBackgroundSpawnFromToolResult(args: {
     sessionId: args.sessionId,
     toolCallId: args.toolCallId,
     taskId,
-    title: readString(parsedArgs, "description") ?? presentation.displayName,
+    title: readTrimmedString(parsedArgs, "description") ?? presentation.displayName,
     snapshot,
     terminalState: args.inProgress ? "running" : "unknown",
     outputPath: extractOutputPathFromText(snapshot),

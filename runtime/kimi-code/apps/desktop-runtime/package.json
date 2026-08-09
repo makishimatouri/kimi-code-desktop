@@ -1,0 +1,36 @@
+{
+  "name": "@moonshot-ai/desktop-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Source-built Kimi runtime process for Kimi Code Desktop",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "build:sea": "node scripts/build-sea.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "@jsquash/webp": "^1.5.0",
+    "@moonshot-ai/agent-core-v2": "workspace:^",
+    "@moonshot-ai/kimi-code-oauth": "workspace:^",
+    "@moonshot-ai/klient": "workspace:^",
+    "@moonshot-ai/transcript": "workspace:^",
+    "node-pty": "^1.1.0",
+    "zod": "catalog:"
+  },
+  "engines": {
+    "node": ">=24.15.0"
+  },
+  "devDependencies": {
+    "postject": "1.0.0-alpha.6"
+  }
+}

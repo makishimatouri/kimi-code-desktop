@@ -11,7 +11,6 @@ describe("ReadinessOverlay", () => {
 				error={null}
 				onRetry={() => {}}
 				onContinue={() => {}}
-				onOpenDownload={() => {}}
 				onOpenSettings={() => {}}
 			/>,
 		);
@@ -26,7 +25,6 @@ describe("ReadinessOverlay", () => {
 				error="boom"
 				onRetry={onRetry}
 				onContinue={() => {}}
-				onOpenDownload={() => {}}
 				onOpenSettings={() => {}}
 			/>,
 		);
@@ -67,7 +65,6 @@ describe("ReadinessOverlay", () => {
 				error={null}
 				onRetry={() => {}}
 				onContinue={() => {}}
-				onOpenDownload={() => {}}
 				onOpenSettings={() => {}}
 			/>,
 		);
@@ -110,7 +107,6 @@ describe("ReadinessOverlay", () => {
 				error={null}
 				onRetry={() => {}}
 				onContinue={onContinue}
-				onOpenDownload={() => {}}
 				onOpenSettings={onOpenSettings}
 			/>,
 		);
@@ -149,7 +145,6 @@ describe("ReadinessOverlay", () => {
 				error={null}
 				onRetry={() => {}}
 				onContinue={() => {}}
-				onOpenDownload={() => {}}
 				onOpenSettings={() => {}}
 			/>,
 		);

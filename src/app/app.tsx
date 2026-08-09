@@ -6,10 +6,12 @@ import { useSessionStream } from "@/hooks/useSessionStream";
 import { DirectoryNotFoundError, useSessions } from "@/hooks/useSessions";
 import { getApiBaseUrl, hasPlatformModifier } from "@/hooks/utils";
 import type { SessionStatus, UploadSessionFileResponse } from "@/lib/api/models";
+import { clearBackgroundTasksSession } from "@/lib/background-tasks/sync";
+import { useDesktopUpdate } from "@/lib/check-updates";
 import { useDomTranslations, useI18n } from "@/lib/i18n";
 import { classifyIdleReason } from "@/lib/idle-turn";
-import { openKimiCodeWebsite } from "@/lib/kimi-code-link";
 import { shouldPauseForRuntimeReadiness } from "@/lib/runtime-readiness";
+import { useSessionStreamOrchestrator } from "@/lib/session-stream/provider";
 import {
   checkRuntimeReadiness,
   isTauri,
@@ -20,8 +22,6 @@ import {
   showWindow,
 } from "@/lib/tauri-api";
 import { useToolEventsStore } from "@/lib/tool-events/store";
-import { clearBackgroundTasksSession } from "@/lib/background-tasks/sync";
-import { useSessionStreamOrchestrator } from "@/lib/session-stream/provider";
 import { ConversationView } from "@/modules/conversation/conversation-view";
 import { GoalCancelConfirmation } from "@/modules/conversation/goal-cancel-confirmation";
 import { ReadinessOverlay } from "@/modules/readiness/readiness-overlay";
@@ -51,6 +51,7 @@ export default function App() {
   useTheme();
   useDomTranslations();
   const { resolvedLanguage, t } = useI18n();
+  const desktopUpdate = useDesktopUpdate();
 
   useLayoutEffect(() => {
     if (isTauri()) {
@@ -195,8 +196,6 @@ export default function App() {
     () => sessions.find((s) => s.sessionId === selectedSessionId),
     [sessions, selectedSessionId],
   );
-
-  const anyRunning = useMemo(() => sessions.some((s) => s.isRunning), [sessions]);
 
   const handleSessionStatus = useCallback(
     (status: SessionStatus) => {
@@ -545,7 +544,6 @@ export default function App() {
               setRuntimeCheckError(null);
               setHasAcknowledgedRuntime(true);
             }}
-            onOpenDownload={() => void openKimiCodeWebsite()}
             onOpenSettings={() => openSettings("config")}
           />
         )}
@@ -564,10 +562,10 @@ export default function App() {
         sidebar={
           <AppSidebar
             collapsed={!sidebarOpen}
-            running={anyRunning}
             onToggleCollapsed={() => setSidebarOpen((v) => !v)}
             onNewSession={handleNewSession}
             onOpenSettings={() => openSettings()}
+            updateAvailable={desktopUpdate !== null}
             sessions={sessions}
             archivedSessions={archivedSessions}
             selectedId={selectedSessionId}

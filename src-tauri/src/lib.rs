@@ -1,21 +1,16 @@
-pub mod acp;
-pub mod acp_capabilities;
-pub mod acp_desktop;
-pub mod acp_translate;
 pub mod commands;
 pub mod git_diff;
 pub mod global_config;
 pub mod goal_queue;
 pub mod goal_store;
-pub mod managed_usage;
-pub mod mcp_config;
 pub mod native_menu;
 pub mod notify;
-pub mod oauth_login;
 pub mod provider_config;
-pub mod runtime_backend;
+pub mod runtime;
 pub mod runtime_check;
 pub mod security;
+pub mod session_compat;
+pub mod session_config;
 pub mod session_files;
 pub mod session_influence;
 pub mod session_store;
@@ -50,8 +45,7 @@ pub fn run() {
     }
     let app = builder
         .plugin(tauri_plugin_notification::init())
-        .manage(acp::AcpProcessManager::new())
-        .manage(acp_desktop::AcpDesktopClient::new())
+        .manage(runtime::host::RuntimeHost::new())
         .invoke_handler(tauri::generate_handler![
             commands::wire_connect,
             commands::wire_disconnect,
@@ -95,6 +89,10 @@ pub fn run() {
             commands::get_global_config,
             commands::get_config_toml,
             commands::get_providers_overview,
+            commands::list_provider_catalog,
+            commands::get_provider_catalog_entry,
+            commands::import_provider_from_catalog,
+            commands::import_provider_registry,
             commands::update_config_toml,
             commands::get_mcp_config,
             commands::update_mcp_config,
@@ -124,6 +122,12 @@ pub fn run() {
             native_menu::handle_menu_event(app, event.id().as_ref());
         })
         .setup(|app| {
+            // Best-effort pre-cutover migration preflight: scan + backup +
+            // marker. Runs before any session can be opened; failures are
+            // logged, never fatal.
+            if let Err(err) = runtime::migrate::run_startup_preflight() {
+                eprintln!("[WARN] source-runtime migration preflight failed: {err}");
+            }
             let handle = app.handle().clone();
             tray::setup_tray(&handle)?;
             #[cfg(target_os = "macos")]
@@ -199,8 +203,7 @@ pub fn run() {
         }
 
         if let tauri::RunEvent::ExitRequested { .. } = event {
-            let acp_manager = app_handle.state::<acp::AcpProcessManager>();
-            acp_manager.stop_all();
+            app_handle.state::<runtime::host::RuntimeHost>().shutdown();
         }
     });
 }

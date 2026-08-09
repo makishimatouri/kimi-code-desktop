@@ -12,7 +12,6 @@
  * Do not edit the class manually.
  */
 
-import { mapValues } from '../runtime';
 import type { ModelCapability } from './ModelCapability';
 import {
     ModelCapabilityFromJSON,

@@ -71,6 +71,7 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   "Close side chat": "关闭侧聊",
   "Close sidebar": "关闭侧边栏",
   "Close workspace files panel": "关闭工作区文件面板",
+  Collapse: "收起",
   "Collapse agent monitor": "折叠 Agent 监控",
   "Collapse sidebar": "折叠侧边栏",
   "Collapse skills panel": "折叠技能面板",
@@ -120,6 +121,7 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
     "回车提交 · Shift+回车换行 · Esc 取消",
   Env: "环境变量",
   "Env overrides": "环境变量覆盖",
+  "Expand all": "展开全部",
   "Expand sidebar": "展开侧边栏",
   "Expand workspace panel": "展开工作区面板",
   "Extra skill directories": "额外技能目录",
@@ -346,6 +348,7 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   "Settings saved": "设置已保存",
   "Show API key": "显示 API 密钥",
   "Show in Finder": "在 Finder 中显示",
+  "Show full output": "显示完整输出",
   "Show thinking stream": "显示思考流",
   "Side Chat": "侧聊",
   "Skills Library": "技能库",
@@ -525,9 +528,9 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   "· Balance": "· 余额",
   "Local token usage": "本地 Token 用量",
   "Scanning session records…": "扫描会话记录中…",
-  "Total Tokens": "总 Tokens",
-  "Cache reads": "Cache 读",
-  "Cache writes": "Cache 写",
+  "Total Tokens": "累计 Tokens",
+  "Cache reads": "缓存读取",
+  "Cache writes": "缓存写入",
   Scanned: "已扫描",
   "wire files · matched": "个 wire · 命中",
   "turn records": "条 turn 记录",
@@ -607,9 +610,9 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   "(Waiting for the Agent to return a snapshot or completion notification)":
     "（等待 Agent 返回快照或完成通知）",
   "Failed to switch session model": "切换会话模型失败",
-  "Check the ACP connection or try again later.": "请检查 ACP 连接或稍后重试。",
+  "Check the Runtime connection or try again later.": "请检查 Runtime 连接或稍后重试。",
   "The current runtime cannot modify the session model": "当前运行时无法修改会话模型",
-  "Upgrade Kimi Code or check the ACP connection.": "请升级 Kimi Code 或检查 ACP 连接。",
+  "Upgrade Kimi Code or check the Runtime connection.": "请升级 Kimi Code 或检查 Runtime 连接。",
   "Failed to update session Thinking": "更新会话 Thinking 失败",
   "The current runtime cannot modify session Thinking": "当前运行时无法修改会话 Thinking",
   "Model binding": "模型绑定",
@@ -689,6 +692,125 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   "Only shows CronCreate/CronList results the Agent has returned; no Desktop control API.":
     "仅展示 Agent 已返回的 CronCreate/CronList 结果；无 Desktop 控制 API。",
   "Next:": "下次：",
+  "Edit model configuration": "编辑模型配置",
+  "Structured changes are written to a local draft; config.toml updates only after saving.":
+    "结构化修改只会写入本地草稿；点保存后才更新 config.toml。",
+  "Add Provider": "添加 Provider",
+  "Known platform": "已知平台",
+  "Select OpenAI, Anthropic, Google, and other platforms from models.dev, then import model and capability metadata automatically.":
+    "从 models.dev 选择 OpenAI、Anthropic、Google 等平台，自动导入模型与能力信息。",
+  "Custom Registry": "自定义 Registry",
+  "Import the Providers and models in an api.json registry at once and retain its source for future synchronization.":
+    "通过 api.json 一次导入 Registry 中的 Provider 和模型，并保留后续同步来源。",
+  "Search platforms": "搜索平台",
+  "Reading catalog…": "正在读取目录…",
+  "No matching platforms": "没有匹配的平台",
+  "Platform API Key": "平台 API Key",
+  "Catalog default model": "目录默认模型",
+  "Do not set yet": "暂不设置",
+  "Base URL (optional)": "Base URL（可选）",
+  "Catalog Base URL": "目录 Base URL",
+  "Enter when the catalog has no endpoint": "目录没有 endpoint 时填写",
+  "Kimi Code saves the Registry source metadata and synchronizes Providers and models from the same source on later startups.":
+    "Kimi Code 会保存 Registry 来源元数据，并在后续启动时同步同一来源的 Provider 与模型。",
+  "Back to add methods": "返回添加方式",
+  "Loading config.toml…": "加载 config.toml 中…",
+  "Structured configuration cannot be safely edited right now; switch to the advanced config.toml editor or retry reading.":
+    "当前无法安全编辑结构化配置；请转用高级 config.toml 编辑器或重试读取。",
+  "Retry reading": "重试读取",
+  "No Provider added yet": "尚未添加 Provider",
+  "Delete Provider": "删除 Provider",
+  "Provider name": "Provider 名称",
+  "Provider Type": "Provider 类型",
+  "Shown as a password; it will not appear in summaries, prompts, or logs.":
+    "密码形式显示；不会出现在摘要、提示或日志中。",
+  "Environment variables (TOML)": "环境变量（TOML）",
+  "Custom Headers (TOML)": "自定义 Headers（TOML）",
+  "This is a built-in Kimi Code Provider; its name, type, and deletion are protected, but its connection configuration can still be overridden.":
+    "这是 Kimi Code 内置 Provider；名称、类型和删除操作受到保护，但仍可覆盖连接配置。",
+  "Nested Provider settings detected; they will be preserved when editing fields on this page.":
+    "已检测到嵌套 Provider 设置；编辑本页字段时会保留它们。",
+  "Select or add a Provider to edit its connection configuration.":
+    "选择或添加一个 Provider 后编辑其连接配置。",
+  "No models for this Provider yet": "此 Provider 暂无模型",
+  Default: "默认",
+  "Delete model": "删除模型",
+  "Model alias": "模型别名",
+  "Model Provider": "模型 Provider",
+  "Upstream model": "上游模型",
+  "Supported thinking efforts": "支持的思考档位",
+  "Comma-separated, for example low, high, max.": "以逗号分隔，例如 low, high, max。",
+  "Default thinking effort": "默认思考档位",
+  "When not set, the current model or Kimi Code selects the default effort.":
+    "未设置时，由当前模型或 Kimi Code 选择默认档位。",
+  "(Not set)": "（未设置）",
+  "(Current value, not listed among supported options)": "（当前值，未列入支持项）",
+  "Select or add a model to edit its definition.": "选择或添加模型后编辑其定义。",
+  "Deleting the current default model automatically switches to another configured model.":
+    "删除当前默认模型时会自动切换到另一个已配置模型。",
+  "(No models yet)": "（尚无模型）",
+  "Structured Provider / model configuration": "结构化 Provider / 模型配置",
+  "After saving successfully, the Provider summary and other global configuration consumers will refresh.":
+    "保存成功后将刷新 Provider 摘要和其他全局配置消费者。",
+  "Back to summary": "返回摘要",
+  "No Provider configured yet. Add one in the structured or advanced editor below.":
+    "尚未配置 Provider。可在下方结构化编辑器或高级编辑器中添加。",
+  "Update available": "可更新",
+  "Read failed; the current content will not be saved.": "读取失败，当前内容不会被保存。",
+  "Context input": "上下文输入",
+  "Cumulative usage for the selected period": "时间段累计调用用量",
+  "Current context usage": "当前上下文使用情况",
+  "Current context · latest model request": "当前上下文 · 最近一次模型请求",
+  "Kimi Plan platform quota": "Kimi Plan 平台额度",
+  "Model requests": "模型请求",
+  "Non-cached input": "非缓存输入",
+  "Output this turn (not counted in the ring)": "本轮输出（不计入圆环）",
+  "Response is taking longer than usual": "响应时间较长",
+  "Shows the quota returned by the platform directly; it does not map to locally accumulated tokens or the current context.":
+    "此处直接展示平台返回的配额，与本地累计 Token、当前上下文不直接换算。",
+  "Summarizes model calls across all sessions and agents in the selected period; cached tokens are counted again on every call and do not represent the current context size.":
+    "汇总所选时间范围内全部会话与代理的模型调用；缓存 Token 会重复计入每次调用， 不代表当前上下文大小。",
+  "Total input": "输入合计",
+  "Manage MCP servers: the form covers common fields; changes are written to the user-level mcp.json and idle sessions restart to apply them.":
+    "管理 MCP Server：表单维护常用字段，保存后写入用户级 mcp.json，空闲会话重启后生效。",
+  "Add server": "添加 Server",
+  "Add MCP server": "添加 MCP Server",
+  "Failed to parse mcp.json": "mcp.json 解析失败",
+  "Expand the advanced editor below to fix it manually; structured editing is unavailable until it parses.":
+    "请展开下方高级编辑器手动修复；修复前无法使用结构化编辑。",
+  'No MCP servers configured yet. Click "Add server" to connect your first tool service.':
+    "尚未配置 MCP Server。点击「添加 Server」接入第一个工具服务。",
+  "Advanced: edit the full mcp.json directly. JSON is validated locally before saving.":
+    "高级：直接编辑完整 mcp.json。保存前会在本地检查 JSON 格式。",
+  "(No command or URL set)": "（未设置命令或 URL）",
+  "Expand the advanced mcp.json editor (troubleshooting)": "展开高级 mcp.json 编辑器（排障）",
+  "Collapse the advanced mcp.json editor": "收起高级 mcp.json 编辑器",
+  Refresh: "刷新",
+  "Refreshing…": "刷新中…",
+  "Reading…": "读取中…",
+  "Read failed": "读取失败",
+  Enabled: "已启用",
+  Disabled: "已禁用",
+  "Saved to ~/.kimi-code/mcp.json; idle sessions restart to apply.":
+    "保存后写入 ~/.kimi-code/mcp.json，空闲会话重启后生效。",
+  Name: "名称",
+  "Tools will appear as mcp__<name>__<tool>": "工具将显示为 mcp__<名称>__<工具名>",
+  "e.g. filesystem": "例如 filesystem",
+  Transport: "传输方式",
+  "Launched by Kimi Code as a local subprocess": "本地命令，由 Kimi Code 以子进程启动",
+  "Connects to an already-running HTTP endpoint": "连接已在运行的 HTTP 端点",
+  "Legacy HTTP+SSE endpoint; prefer HTTP for new servers":
+    "旧式 HTTP+SSE 端点；新 server 优先用 HTTP",
+  Command: "启动命令",
+  "e.g. npx, uvx, or an absolute path to an executable": "例如 npx、uvx 或可执行文件的绝对路径",
+  "Arguments (one per line)": "参数（每行一个）",
+  "Environment variables (KEY=VALUE per line, optional)": "环境变量（每行 KEY=VALUE，可选）",
+  "Working directory (optional)": "工作目录（可选）",
+  "Headers (KEY=VALUE per line, optional)": "请求头（每行 KEY=VALUE，可选）",
+  "Bearer token environment variable (optional)": "Bearer Token 环境变量名（可选）",
+  "Reads the token from this environment variable so secrets stay out of the config file":
+    "从该环境变量读取 token，避免把密钥写进配置文件",
+  "Enable this server": "启用此 server",
 };
 
 const EN_US_RESTORE_TRANSLATIONS = Object.entries(ZH_CN_TRANSLATIONS).reduce<
@@ -771,6 +893,11 @@ function translateCore(core: string): string | null {
     return `${countMatch[1]} / ${countMatch[2]}`;
   }
 
+  const olderMessagesMatch = core.match(/^Load earlier messages \((\d+) remaining\)$/);
+  if (olderMessagesMatch) {
+    return `加载更早消息（剩余 ${olderMessagesMatch[1]} 条）`;
+  }
+
   return null;
 }
 
@@ -788,7 +915,32 @@ export function translateUiString(value: string, language: ResolvedUiLanguage): 
 }
 
 function restoreCore(core: string): string | null {
-  return EN_US_RESTORE_TRANSLATIONS[core] ?? null;
+  if (core === "展开全部") {
+    return "Expand all";
+  }
+  if (core === "收起") {
+    return "Collapse";
+  }
+  if (core === "显示完整输出") {
+    return "Show full output";
+  }
+
+  const direct = EN_US_RESTORE_TRANSLATIONS[core];
+  if (direct) {
+    return direct;
+  }
+
+  const olderMessagesMatch = core.match(/^加载更早消息（剩余 (\d+) 条）$/);
+  if (olderMessagesMatch) {
+    return `Load earlier messages (${olderMessagesMatch[1]} remaining)`;
+  }
+
+  const truncatedOutputMatch = core.match(/^输出已截断（共 (\d+) 行）$/);
+  if (truncatedOutputMatch) {
+    return `Output truncated (${truncatedOutputMatch[1]} lines)`;
+  }
+
+  return null;
 }
 
 function restoreUiString(value: string): string {

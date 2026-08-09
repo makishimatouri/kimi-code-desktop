@@ -6,6 +6,15 @@ import type {
   TaskProgressEvent,
 } from "@/hooks/wireTypes";
 import {
+  asRecord,
+  firstDefined,
+  readBoolean,
+  readNumber,
+  readString,
+  readTimestamp,
+  type UnknownRecord,
+} from "@/lib/wire-utils";
+import {
   type AgentTask,
   type AgentTaskStatus,
   isActiveAgentStatus,
@@ -13,59 +22,10 @@ import {
   useAgentMonitorStore,
 } from "./store";
 
-type UnknownRecord = Record<string, unknown>;
-
 export type AgentTaskEventEnvelope = {
   type?: string;
   payload?: unknown;
 };
-
-function asRecord(value: unknown): UnknownRecord {
-  return value !== null && typeof value === "object" ? (value as UnknownRecord) : {};
-}
-
-function firstDefined(record: UnknownRecord, ...keys: string[]): unknown {
-  for (const key of keys) {
-    if (record[key] !== undefined && record[key] !== null) return record[key];
-  }
-  return undefined;
-}
-
-function readString(record: UnknownRecord, ...keys: string[]): string | undefined {
-  const value = firstDefined(record, ...keys);
-  return typeof value === "string" && value.trim() ? value : undefined;
-}
-
-function readNumber(record: UnknownRecord, ...keys: string[]): number | undefined {
-  const value = firstDefined(record, ...keys);
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return undefined;
-}
-
-function readBoolean(record: UnknownRecord, ...keys: string[]): boolean | undefined {
-  const value = firstDefined(record, ...keys);
-  return typeof value === "boolean" ? value : undefined;
-}
-
-function readTimestamp(record: UnknownRecord, ...keys: string[]): number | undefined {
-  const value = firstDefined(record, ...keys);
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value < 1_000_000_000_000 ? value * 1000 : value;
-  }
-  if (typeof value === "string" && value.trim()) {
-    const numeric = Number(value);
-    if (Number.isFinite(numeric)) {
-      return numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
-    }
-    const parsed = Date.parse(value);
-    if (!Number.isNaN(parsed)) return parsed;
-  }
-  return undefined;
-}
 
 export function normalizeAgentTaskStatus(status: unknown): AgentTaskStatus {
   const normalized = String(status ?? "queued")
@@ -177,18 +137,15 @@ function createTaskFromRecord(payload: UnknownRecord): AgentTask | null {
       "parent_tool_call_id",
       "parentToolCallId",
       "task_tool_call_id",
+      "toolCallId",
+      "tool_call_id",
     ),
+    parentAgentId: readString(raw, "parent_agent_id", "parentAgentId"),
     suspendedReason,
     swarmIndex: readNumber(raw, "swarm_index", "swarmIndex"),
+    swarmDepth: readNumber(raw, "swarm_depth", "swarmDepth"),
     runInBackground: readBoolean(raw, "run_in_background", "runInBackground"),
-    boundModel: readString(
-      raw,
-      "bound_model",
-      "boundModel",
-      "model_alias",
-      "modelAlias",
-      "model",
-    ),
+    boundModel: readString(raw, "bound_model", "boundModel", "model_alias", "modelAlias", "model"),
     modelPreference: readString(raw, "model_preference", "modelPreference"),
   };
 }
@@ -229,7 +186,17 @@ export function syncAgentMonitorFromTaskCreated(
   const payload = unwrapPayload(event);
   const task = createTaskFromRecord(payload);
   if (!task) return;
-  useAgentMonitorStore.getState().upsertTask(task);
+  const existing = findTask(task.id, task.sessionId);
+  useAgentMonitorStore.getState().upsertTask({
+    ...task,
+    parentToolCallId: task.parentToolCallId ?? existing?.parentToolCallId,
+    parentAgentId: task.parentAgentId ?? existing?.parentAgentId,
+    swarmIndex: task.swarmIndex ?? existing?.swarmIndex,
+    swarmDepth: task.swarmDepth ?? existing?.swarmDepth,
+    runInBackground: task.runInBackground ?? existing?.runInBackground,
+    boundModel: task.boundModel ?? existing?.boundModel,
+    modelPreference: task.modelPreference ?? existing?.modelPreference,
+  });
 }
 
 function appendOutput(existing: AgentTask, chunk: string, stream?: string) {
@@ -280,13 +247,13 @@ export function syncAgentMonitorFromTaskCompleted(
   // Align with acp_translate.rs + CLI: missing status on TaskCompleted means completed.
   const status = normalizeAgentTaskStatus(rawStatus ?? "completed");
   const existing = ensureTask(id, sessionId, {
+    // Out-of-order terminal event: keep the placeholder active until the real
+    // update lands, but do not fabricate a startedAt at completion time.
     status: isActiveAgentStatus(status) ? status : "running",
-    startedAt: Date.now(),
   });
   const outputPreview = readString(payload, "output_preview", "outputPreview");
   const phase =
-    readString(payload, "subagent_phase", "subagentPhase", "phase") ??
-    readString(payload, "error");
+    readString(payload, "subagent_phase", "subagentPhase", "phase") ?? readString(payload, "error");
 
   // Explicit active status (running / in_progress / …): keep active — never force-check off.
   if (rawStatus !== undefined && rawStatus !== null && isActiveAgentStatus(status)) {
@@ -357,8 +324,12 @@ export function syncAgentMonitorFromSubagentLifecycle(
       "parent_tool_call_id",
       "parentToolCallId",
       "task_tool_call_id",
+      "toolCallId",
+      "tool_call_id",
     ),
+    parentAgentId: readString(payload, "parent_agent_id", "parentAgentId"),
     swarmIndex: readNumber(payload, "swarm_index", "swarmIndex"),
+    swarmDepth: readNumber(payload, "swarm_depth", "swarmDepth"),
   });
 
   useAgentMonitorStore.getState().updateTask(
@@ -370,9 +341,18 @@ export function syncAgentMonitorFromSubagentLifecycle(
         existing.agentType,
       description: readString(payload, "description", "item", "task") ?? existing.description,
       parentToolCallId:
-        readString(payload, "parent_tool_call_id", "parentToolCallId", "task_tool_call_id") ??
-        existing.parentToolCallId,
+        readString(
+          payload,
+          "parent_tool_call_id",
+          "parentToolCallId",
+          "task_tool_call_id",
+          "toolCallId",
+          "tool_call_id",
+        ) ?? existing.parentToolCallId,
+      parentAgentId:
+        readString(payload, "parent_agent_id", "parentAgentId") ?? existing.parentAgentId,
       swarmIndex: readNumber(payload, "swarm_index", "swarmIndex") ?? existing.swarmIndex,
+      swarmDepth: readNumber(payload, "swarm_depth", "swarmDepth") ?? existing.swarmDepth,
       startedAt:
         status === "running"
           ? (readTimestamp(payload, "started_at", "startedAt") ?? existing.startedAt ?? Date.now())
@@ -385,6 +365,8 @@ export function syncAgentMonitorFromSubagentLifecycle(
       currentStep: reason ?? subagentPhase ?? defaultStep(status),
       outputPreview:
         readString(payload, "output_preview", "outputPreview", "summary") ?? existing.outputPreview,
+      runInBackground:
+        readBoolean(payload, "run_in_background", "runInBackground") ?? existing.runInBackground,
       boundModel:
         readString(payload, "bound_model", "boundModel", "model_alias", "modelAlias", "model") ??
         existing.boundModel,
@@ -497,10 +479,6 @@ export function completeRunningAgentMonitorTasks(
   }
 }
 
-export function clearAgentMonitorSession(sessionId: string): void {
-  useAgentMonitorStore.getState().clearSession(sessionId);
-}
-
 export function parseSubagentEventPayload(event: SubagentEventWire): {
   parentToolCallId?: string;
   agentId?: string;
@@ -511,6 +489,8 @@ export function parseSubagentEventPayload(event: SubagentEventWire): {
   const payload = event.payload;
   const parentToolCallId =
     payload.parent_tool_call_id ??
+    ((payload as Record<string, unknown>).toolCallId as string | undefined) ??
+    ((payload as Record<string, unknown>).tool_call_id as string | undefined) ??
     ((payload as Record<string, unknown>).task_tool_call_id as string | undefined);
   return {
     parentToolCallId,

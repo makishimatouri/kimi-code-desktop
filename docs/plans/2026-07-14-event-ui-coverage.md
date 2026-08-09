@@ -1,5 +1,7 @@
 # Event And Tool UI Coverage Implementation Plan
 
+> **文档状态（2026-08-09）：历史实施记录。** 本文保留 ACP 时代的实现路径用于追溯；当前事件链、live/replay 与 fallback 契约以 [`2026-08-07-ui-compatibility-checklist.md`](2026-08-07-ui-compatibility-checklist.md) 为准。
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Make persisted steering, tool semantics, todo/file side effects, and media content visible in the desktop UI without creating bespoke UI for every tool.

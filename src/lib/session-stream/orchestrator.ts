@@ -15,7 +15,7 @@
  * visible snapshot and forwards actions through this object.
  */
 
-import { listenEvent } from "@/lib/tauri-api";
+import { listenEvent, parseWireEventPayload } from "@/lib/tauri-api";
 import { emptySessionConfigState } from "@/lib/session-config-state";
 import type { LiveMessage } from "@/hooks/types";
 import type { UploadSessionFileResponse } from "@/lib/api/models";
@@ -54,7 +54,6 @@ export const EMPTY_SESSION_VIEW: SessionViewState = {
   sessionConfigUpdating: false,
   connectionPhase: "disconnected",
   connectionId: null,
-  lastEventAt: 0,
   updatedAt: 0,
 };
 
@@ -88,6 +87,7 @@ export type SessionRuntimeActions = {
 type OrchestratorEntry = {
   runtime: SessionRuntime;
   lastVisibleAt: number;
+  started: boolean;
 };
 
 export type SessionStreamOrchestrator = {
@@ -147,14 +147,16 @@ export function createSessionStreamOrchestrator(): SessionStreamOrchestrator {
   const getOrCreate = (sessionId: string, options: SessionRuntimeOptions) => {
     const existing = runtimes.get(sessionId);
     if (existing) {
-      existing.runtime.updateOptions(options);
+      // Wire dispatch stays owned by the single global listener below; never
+      // let option refreshes re-enable the per-session listener (issue #12).
+      existing.runtime.updateOptions({ ...options, registerPerSessionListener: false });
       return { runtime: existing.runtime, created: false };
     }
     const runtime = createSessionRuntime({
       ...options,
       registerPerSessionListener: false,
     });
-    runtimes.set(sessionId, { runtime, lastVisibleAt: Date.now() });
+    runtimes.set(sessionId, { runtime, lastVisibleAt: Date.now(), started: false });
     runtime.subscribe(() => {
       // Forward engine updates only while this session is on screen.
       if (visibleSessionId === sessionId) {
@@ -167,19 +169,17 @@ export function createSessionStreamOrchestrator(): SessionStreamOrchestrator {
   // Single global wire:message listener (G5 §5.5): route by session_id, drop
   // events for sessions without a runtime. Registered exactly once at creation.
   unlistenGlobal = listenEvent("wire:message", (payload) => {
-    const eventPayload = payload as { session_id?: unknown; message?: unknown } | undefined;
-    if (
-      !eventPayload ||
-      typeof eventPayload.session_id !== "string" ||
-      typeof eventPayload.message !== "string"
-    ) {
+    const parsed = parseWireEventPayload(payload);
+    if (!parsed) {
       return;
     }
-    const entry = runtimes.get(eventPayload.session_id);
+    const entry = runtimes.get(parsed.sessionId);
     if (!entry) {
       return;
     }
-    entry.runtime.handleWireMessage(eventPayload.message);
+    for (const message of parsed.messages) {
+      entry.runtime.handleWireMessage(message);
+    }
   });
 
   const collectLiveSessionIds = (): string[] => {
@@ -258,14 +258,17 @@ export function createSessionStreamOrchestrator(): SessionStreamOrchestrator {
         emit();
         return;
       }
-      const { runtime, created } = getOrCreate(sessionId, options);
+      const { runtime } = getOrCreate(sessionId, options);
       const entry = runtimes.get(sessionId) as OrchestratorEntry;
       entry.lastVisibleAt = Date.now();
       visibleSessionId = sessionId;
       const wantsLive = Boolean(options.autoConnect);
-      if (created) {
+      const shouldStart = !entry.started;
+      if (shouldStart) {
         // start() owns the full per-session bootstrap (replay / autoConnect);
-        // it must run exactly once so it can never wipe a background state.
+        // actionsFor() may have created the runtime during render, so track
+        // lifecycle startup independently from object creation.
+        entry.started = true;
         runtime.start();
       } else {
         const snapshot = runtime.getSnapshot();
@@ -277,7 +280,7 @@ export function createSessionStreamOrchestrator(): SessionStreamOrchestrator {
           runtime.connect();
         }
       }
-      enforceLiveWorkerCap(wantsLive && created ? [sessionId] : []);
+      enforceLiveWorkerCap(wantsLive && shouldStart ? [sessionId] : []);
       emit();
     },
 

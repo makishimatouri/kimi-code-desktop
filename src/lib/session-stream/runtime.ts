@@ -519,6 +519,7 @@ async function replayHistoryMessagesInBatches(
   messages: string[],
   handleMessage: (message: string) => void,
   isCancelled: () => boolean,
+  onBatchComplete?: (hasMore: boolean) => void,
 ): Promise<void> {
   for (let index = 0; index < messages.length; index += HISTORY_REPLAY_CHUNK_SIZE) {
     if (isCancelled()) {
@@ -528,7 +529,9 @@ async function replayHistoryMessagesInBatches(
     for (const message of chunk) {
       handleMessage(message);
     }
-    if (index + HISTORY_REPLAY_CHUNK_SIZE < messages.length) {
+    const hasMore = index + chunk.length < messages.length;
+    onBatchComplete?.(hasMore);
+    if (hasMore) {
       await new Promise<void>((resolve) => {
         if (typeof requestAnimationFrame === "function") {
           requestAnimationFrame(() => resolve());
@@ -766,7 +769,6 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
   let sessionConfigUpdating = false;
   let connectionPhase: ConnectionPhase = "disconnected";
   let connectionId: string | null = null;
-  let lastEventAt = 0;
 
   // ── Refs (was useRef; kept as mutable box objects so access reads verbatim) ──
   const sessionConfigStateRef: { current: SessionConfigState } = {
@@ -801,6 +803,9 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
   const goalHistoryResyncGenerationRef: { current: number } = { current: 0 };
   const goalHistoryResyncActiveRef: { current: boolean } = { current: false };
   const goalHistoryReplayBufferRef: { current: { messages: LiveMessage[] } | null } = {
+    current: null,
+  };
+  const historyReplayBufferRef: { current: { messages: LiveMessage[] } | null } = {
     current: null,
   };
   const latestSessionStatusRef: { current: SessionStatus | null } = { current: null };
@@ -864,6 +869,7 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
     current: { inThink: false, buffer: "" },
   };
   const streamUpdateFrameRef: { current: number | null } = { current: null };
+  const lastStreamContentFlushAtRef: { current: number | null } = { current: null };
   const thinkingCompletedRef: { current: boolean } = { current: false };
   const flushBufferedStreamUpdateRef: { current: () => void } = { current: () => undefined };
   const flushInlineThinkBufferRef: { current: (isReplay: boolean) => void } = {
@@ -965,7 +971,6 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
       sessionConfigUpdating,
       connectionPhase,
       connectionId,
-      lastEventAt,
       updatedAt: Date.now(),
     };
   };
@@ -1055,9 +1060,6 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
       case "connectionId":
         connectionId = next as string | null;
         break;
-      case "lastEventAt":
-        lastEventAt = next as number;
-        break;
       default:
         break;
     }
@@ -1110,6 +1112,45 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
     emit();
   };
 
+  type StatusUpdateSnapshotFields = Pick<
+    SessionViewState,
+    | "contextUsage"
+    | "contextTokens"
+    | "maxContextTokens"
+    | "tokenUsage"
+    | "planMode"
+    | "permissionMode"
+    | "swarmMode"
+    | "goalMode"
+  >;
+  const applyStatusUpdateFields = (updates: Partial<StatusUpdateSnapshotFields>): void => {
+    let changed = false;
+    const apply = <K extends keyof StatusUpdateSnapshotFields>(
+      key: K,
+      next: StatusUpdateSnapshotFields[K] | undefined,
+    ): void => {
+      if (next === undefined || Object.is(state[key], next)) {
+        return;
+      }
+      applyField(key as keyof SessionViewState, next as SessionViewState[keyof SessionViewState]);
+      changed = true;
+    };
+
+    apply("contextUsage", updates.contextUsage);
+    apply("contextTokens", updates.contextTokens);
+    apply("maxContextTokens", updates.maxContextTokens);
+    apply("tokenUsage", updates.tokenUsage);
+    apply("planMode", updates.planMode);
+    apply("permissionMode", updates.permissionMode);
+    apply("swarmMode", updates.swarmMode);
+    apply("goalMode", updates.goalMode);
+
+    if (changed) {
+      rebuildSnapshot();
+      emit();
+    }
+  };
+
   // Setters (was useState setters; SetStateAction semantics preserved)
   const setMessagesInternal = (
     action: LiveMessage[] | ((prev: LiveMessage[]) => LiveMessage[]),
@@ -1147,10 +1188,10 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
     goalModeRef.current = true;
     setGoalMode(true);
   };
-  // Wrapped setMessages. Goal continuation history is rebuilt offscreen and
-  // committed once, so replay never duplicates the already-rendered first turn.
+  // Wrapped setMessages. History replay is rebuilt offscreen and committed in
+  // batches, so each replay chunk produces one visible message snapshot.
   const setMessages: typeof setMessagesInternal = (action) => {
-    const replayBuffer = goalHistoryReplayBufferRef.current;
+    const replayBuffer = goalHistoryReplayBufferRef.current ?? historyReplayBufferRef.current;
     if (replayBuffer) {
       replayBuffer.messages = typeof action === "function" ? action(replayBuffer.messages) : action;
       return;
@@ -1353,6 +1394,48 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
       case "idle": {
         if (explicitReplayInProgress) {
           setStatus((current) => (current === "streaming" ? current : "submitted"));
+          break;
+        }
+
+        // A terminal worker status is the fallback completion signal when the
+        // prompt RPC result is lost during a session switch or reconnect. New
+        // runtimes associate it with the exact prompt request; older runtimes
+        // omit the id and retain the broad compatibility fallback below.
+        const terminalPrompt =
+          normalized.reason === "finished" || normalized.reason === "cancelled";
+        if (terminalPrompt) {
+          const terminalPromptRequestId = payload.prompt_request_id?.trim() || null;
+          if (terminalPromptRequestId) {
+            const matchedPrompt = promptRequestIdsRef.current.delete(terminalPromptRequestId);
+
+            // The normal contract is result -> terminal(id), so an identified
+            // status for an already-settled A must never finish a newer B.
+            if (!matchedPrompt) {
+              break;
+            }
+
+            optimisticUserMessagesRef.current.shift();
+            if (pendingMessageRef.current !== null || promptRequestIdsRef.current.size > 0) {
+              setStatus("submitted");
+              break;
+            }
+
+            cancelRequestIdsRef.current.clear();
+            setStatus(errorRef.current ? "error" : "ready");
+            setAwaitingFirstResponse(false);
+            awaitingIdleRef.current = false;
+            completeStreamingMessages();
+            interruptStaleToolCalls();
+            break;
+          }
+
+          promptRequestIdsRef.current.clear();
+          cancelRequestIdsRef.current.clear();
+          setStatus(errorRef.current ? "error" : "ready");
+          setAwaitingFirstResponse(false);
+          awaitingIdleRef.current = false;
+          completeStreamingMessages();
+          interruptStaleToolCalls();
           break;
         }
 
@@ -1740,6 +1823,18 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
         return msg;
       }),
     );
+    lastStreamContentFlushAtRef.current = Date.now();
+  };
+
+  const getBufferedStreamFlushInterval = (): number => {
+    const contentLength = currentThinkingRef.current.length + currentTextRef.current.length;
+    if (contentLength > 8000) {
+      return 120;
+    }
+    if (contentLength > 2000) {
+      return 60;
+    }
+    return 0;
   };
 
   const scheduleBufferedStreamUpdate = () => {
@@ -1747,10 +1842,18 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
       return;
     }
 
-    streamUpdateFrameRef.current = window.requestAnimationFrame(() => {
+    const flushOnFrame = () => {
+      const now = Date.now();
+      const lastFlushAt = lastStreamContentFlushAtRef.current;
+      if (lastFlushAt !== null && now - lastFlushAt < getBufferedStreamFlushInterval()) {
+        streamUpdateFrameRef.current = window.requestAnimationFrame(flushOnFrame);
+        return;
+      }
       streamUpdateFrameRef.current = null;
       applyBufferedStreamContent();
-    });
+    };
+
+    streamUpdateFrameRef.current = window.requestAnimationFrame(flushOnFrame);
   };
 
   const flushBufferedStreamUpdate = () => {
@@ -1886,6 +1989,7 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
     flushBufferedStreamUpdate();
     currentThinkingRef.current = "";
     currentTextRef.current = "";
+    lastStreamContentFlushAtRef.current = null;
     inlineThinkParserRef.current = { inThink: false, buffer: "" };
     thinkingCompletedRef.current = false;
     thinkingMessageIdRef.current = null;
@@ -1983,6 +2087,7 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
 
   // Reset all state
   const resetState = (preserveSlashCommands = false, preserveSessionState = false) => {
+    historyReplayBufferRef.current = null;
     if (!preserveSessionState) {
       goalHistoryResyncGenerationRef.current += 1;
       goalHistoryResyncActiveRef.current = false;
@@ -2539,16 +2644,8 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
         sealOpenStreamBlocks();
         const toolCall = event.payload;
         currentToolCallIdRef.current = toolCall.id;
-
-        // Initialize tool call state
         const initialArgs = toolCall.function.arguments || "";
-        currentToolCallsRef.current.set(toolCall.id, {
-          id: toolCall.id,
-          name: toolCall.function.name,
-          arguments: initialArgs,
-          argumentsComplete: false,
-          messageId: undefined,
-        });
+        const existingToolCall = currentToolCallsRef.current.get(toolCall.id);
 
         // Parse initial arguments if available
         let parsedInput: unknown;
@@ -2559,6 +2656,38 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
             // Not valid JSON yet, leave as undefined
           }
         }
+
+        // ACP may announce a Swarm before its durable native tool record has
+        // flushed, then repeat the same call with complete arguments. Hydrate
+        // the existing card in place instead of creating a duplicate row.
+        if (existingToolCall?.messageId) {
+          existingToolCall.name = toolCall.function.name;
+          existingToolCall.arguments = initialArgs;
+          setMessages((prev) =>
+            prev.map((message) =>
+              message.id === existingToolCall.messageId && message.toolCall
+                ? {
+                    ...message,
+                    toolCall: {
+                      ...message.toolCall,
+                      title: toolCall.function.name,
+                      ...(parsedInput !== undefined ? { input: parsedInput } : {}),
+                    },
+                  }
+                : message,
+            ),
+          );
+          break;
+        }
+
+        // Initialize tool call state
+        currentToolCallsRef.current.set(toolCall.id, {
+          id: toolCall.id,
+          name: toolCall.function.name,
+          arguments: initialArgs,
+          argumentsComplete: false,
+          messageId: undefined,
+        });
 
         // Create tool message
         const toolMessageId = getNextMessageId("assistant");
@@ -2835,7 +2964,8 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
           clearAwaitingFirstResponse();
         }
         const payload = (event as ApprovalRequestEvent).payload;
-        const tc = currentToolCallsRef.current.get(payload.tool_call_id);
+        const toolCallId = payload.tool_call_id ?? "";
+        const tc = currentToolCallsRef.current.get(toolCallId);
 
         if (isReplay) {
           const approvalState = {
@@ -2843,7 +2973,7 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
             action: payload.action,
             description: payload.description,
             sender: payload.sender,
-            toolCallId: payload.tool_call_id,
+            toolCallId: toolCallId,
             toolKind: payload.kind ?? null,
             rpcMessageId,
             submitted: true,
@@ -2900,7 +3030,7 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
           action: payload.action,
           description: payload.description,
           sender: payload.sender,
-          toolCallId: payload.tool_call_id,
+          toolCallId: toolCallId,
           toolKind: payload.kind ?? null,
           rpcMessageId,
           submitted: false,
@@ -2913,14 +3043,14 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
           tc.approval = approvalState;
         } else {
           const fallbackState: ToolCallState = {
-            id: payload.tool_call_id,
+            id: toolCallId,
             name: payload.action,
             arguments: "",
             argumentsComplete: false,
             messageId: undefined,
             approval: approvalState,
           };
-          currentToolCallsRef.current.set(payload.tool_call_id, fallbackState);
+          currentToolCallsRef.current.set(toolCallId, fallbackState);
         }
 
         let messageId = tc?.messageId;
@@ -2969,9 +3099,9 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
             },
           };
 
-          currentToolCallsRef.current.set(payload.tool_call_id, {
-            ...(currentToolCallsRef.current.get(payload.tool_call_id) ?? {
-              id: payload.tool_call_id,
+          currentToolCallsRef.current.set(toolCallId, {
+            ...(currentToolCallsRef.current.get(toolCallId) ?? {
+              id: toolCallId,
               name: payload.action,
               arguments: "",
               argumentsComplete: false,
@@ -2985,7 +3115,7 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
 
         pendingApprovalRequestsRef.current.set(payload.id, {
           requestId: payload.id,
-          toolCallId: payload.tool_call_id,
+          toolCallId: toolCallId,
           messageId,
           rpcId: rpcMessageId,
           submitted: false,
@@ -3125,20 +3255,21 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
           clearAwaitingFirstResponse();
         }
         const qPayload = (event as QuestionRequestEvent).payload;
+        const toolCallId = qPayload.tool_call_id ?? "";
         // ACP ask-user permission ids are `${parentId}:question:N`; prefer the
         // already-streamed AskUserQuestion tool card so we don't leave a
         // dangling Agent/Generic row beside the QuestionCard.
-        const parentToolCallId = resolveAskUserParentToolCallId(qPayload.tool_call_id);
+        const parentToolCallId = resolveAskUserParentToolCallId(toolCallId);
         const qtc =
-          currentToolCallsRef.current.get(qPayload.tool_call_id) ??
-          (parentToolCallId !== qPayload.tool_call_id
+          currentToolCallsRef.current.get(toolCallId) ??
+          (parentToolCallId !== toolCallId
             ? currentToolCallsRef.current.get(parentToolCallId)
             : undefined);
 
         if (isReplay) {
           const questionState = {
             id: qPayload.id,
-            toolCallId: qPayload.tool_call_id,
+            toolCallId: toolCallId,
             questions: qPayload.questions,
             rpcMessageId,
             submitted: true,
@@ -3183,7 +3314,7 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
 
         const questionState = {
           id: qPayload.id,
-          toolCallId: qPayload.tool_call_id,
+          toolCallId: toolCallId,
           questions: qPayload.questions,
           rpcMessageId,
           submitted: false,
@@ -3223,9 +3354,9 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
             },
           };
 
-          currentToolCallsRef.current.set(qPayload.tool_call_id, {
-            ...(currentToolCallsRef.current.get(qPayload.tool_call_id) ?? {
-              id: qPayload.tool_call_id,
+          currentToolCallsRef.current.set(toolCallId, {
+            ...(currentToolCallsRef.current.get(toolCallId) ?? {
+              id: toolCallId,
               name: "AskUserQuestion",
               arguments: "",
               argumentsComplete: false,
@@ -3238,10 +3369,10 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
         }
 
         // Alias permission toolCallId → parent message so respond/result stay linked.
-        if (parentToolCallId !== qPayload.tool_call_id && qtc?.messageId) {
-          currentToolCallsRef.current.set(qPayload.tool_call_id, {
-            ...(currentToolCallsRef.current.get(qPayload.tool_call_id) ?? {
-              id: qPayload.tool_call_id,
+        if (parentToolCallId !== toolCallId && qtc?.messageId) {
+          currentToolCallsRef.current.set(toolCallId, {
+            ...(currentToolCallsRef.current.get(toolCallId) ?? {
+              id: toolCallId,
               name: "AskUserQuestion",
               arguments: "",
               argumentsComplete: false,
@@ -3252,7 +3383,7 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
 
         pendingQuestionRequestsRef.current.set(qPayload.id, {
           requestId: qPayload.id,
-          toolCallId: qPayload.tool_call_id,
+          toolCallId: toolCallId,
           messageId: qMessageId,
           rpcId: rpcMessageId,
           submitted: false,
@@ -3301,24 +3432,26 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
 
       case "StatusUpdate": {
         clearStepRetryStatus();
+        const statusUpdateFields: Partial<StatusUpdateSnapshotFields> = {};
+
         const nextContextUsage = event.payload.context_usage;
         if (typeof nextContextUsage === "number") {
-          setContextUsage(nextContextUsage);
+          statusUpdateFields.contextUsage = nextContextUsage;
         }
 
         const nextContextTokens = event.payload.context_tokens;
         if (typeof nextContextTokens === "number") {
-          setContextTokens(nextContextTokens);
+          statusUpdateFields.contextTokens = nextContextTokens;
         }
 
         const nextMaxContextTokens = event.payload.max_context_tokens;
         if (typeof nextMaxContextTokens === "number") {
-          setMaxContextTokens(nextMaxContextTokens);
+          statusUpdateFields.maxContextTokens = nextMaxContextTokens;
         }
 
         const nextTokenUsage = event.payload.token_usage;
         if (nextTokenUsage) {
-          setTokenUsage(nextTokenUsage);
+          statusUpdateFields.tokenUsage = nextTokenUsage;
         }
 
         const nextPlanMode = event.payload.plan_mode;
@@ -3326,7 +3459,7 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
           typeof nextPlanMode === "boolean" &&
           typeof pendingModeUpdatesRef.current.planMode !== "boolean"
         ) {
-          setPlanMode(nextPlanMode);
+          statusUpdateFields.planMode = nextPlanMode;
           planModeRef.current = nextPlanMode;
         }
 
@@ -3338,7 +3471,7 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
             nextPermissionMode === "yolo") &&
           !pendingModeUpdatesRef.current.permissionMode
         ) {
-          setPermissionMode(nextPermissionMode);
+          statusUpdateFields.permissionMode = nextPermissionMode;
           permissionModeRef.current = nextPermissionMode;
         }
 
@@ -3347,14 +3480,8 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
           typeof nextSwarmMode === "boolean" &&
           typeof pendingModeUpdatesRef.current.swarmMode !== "boolean"
         ) {
-          setSwarmMode(nextSwarmMode);
+          statusUpdateFields.swarmMode = nextSwarmMode;
           swarmModeRef.current = nextSwarmMode;
-        }
-
-        if (event.payload.goal_refresh && !isReplay) {
-          void syncGoalSnapshot().catch((error) => {
-            console.warn("[SessionStream] Failed to refresh native Goal:", error);
-          });
         }
 
         const nextGoalMode = event.payload.goal_mode;
@@ -3362,8 +3489,16 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
           typeof nextGoalMode === "boolean" &&
           typeof pendingModeUpdatesRef.current.goalMode !== "boolean"
         ) {
-          setGoalMode(nextGoalMode);
+          statusUpdateFields.goalMode = nextGoalMode;
           goalModeRef.current = nextGoalMode;
+        }
+
+        applyStatusUpdateFields(statusUpdateFields);
+
+        if (event.payload.goal_refresh && !isReplay) {
+          void syncGoalSnapshot().catch((error) => {
+            console.warn("[SessionStream] Failed to refresh native Goal:", error);
+          });
         }
 
         // If we have a message_id, create a special message to display it
@@ -3758,7 +3893,7 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
     }
   };
 
-  const flushPendingModeUpdates = async (connection: StreamConnection) => {
+  const flushPendingModeUpdates = async (connection: StreamConnection, onlyPermission = false) => {
     const runFlush = async () => {
       // Drain until empty so updates queued while we were sending are not dropped.
       for (;;) {
@@ -3770,13 +3905,13 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
         if (pending.permissionMode) {
           updates.push(["set_permission_mode", { mode: pending.permissionMode }]);
         }
-        if (typeof pending.planMode === "boolean") {
+        if (!onlyPermission && typeof pending.planMode === "boolean") {
           updates.push(["set_plan_mode", { enabled: pending.planMode }]);
         }
-        if (typeof pending.swarmMode === "boolean") {
+        if (!onlyPermission && typeof pending.swarmMode === "boolean") {
           updates.push(["set_swarm_mode", { enabled: pending.swarmMode }]);
         }
-        if (typeof pending.goalMode === "boolean") {
+        if (!onlyPermission && typeof pending.goalMode === "boolean") {
           updates.push(["set_goal_mode", { enabled: pending.goalMode }]);
         }
         if (updates.length === 0) {
@@ -3874,9 +4009,10 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
       await Promise.resolve(ws.send(JSON.stringify(message)));
       console.log("[SessionStream] Sent pending message after connect:", pendingMessage.text);
     } catch (err) {
-      if (pendingMessageRef.current === null) {
-        pendingMessageRef.current = pendingMessage;
-      }
+      // A dispatched prompt failure is terminal. Keeping it queued lets the
+      // outer connection bootstrap mistake the failure for a connect error
+      // and silently resend it forever.
+      pendingMessageRef.current = null;
       promptRequestIdsRef.current.delete(messageId);
       optimisticUserMessagesRef.current.shift();
       if (pendingMessage.goalSwitchWasArmed && useToolEventsStore.getState().currentGoal === null) {
@@ -4719,6 +4855,38 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
         wsRef.current = null;
       };
 
+      const handleTauriPostConnectError = (err: unknown) => {
+        if (wsRef.current !== connection) {
+          return;
+        }
+        const setupError = err instanceof Error ? err : new Error(String(err));
+        console.error("[SessionStream] Tauri wire setup or dispatch failed:", setupError);
+
+        // sendPendingMessage already records prompt failures. Initialize,
+        // replay, or mode flush failures still need the same terminal cleanup.
+        if (errorRef.current?.message !== setupError.message) {
+          setError(setupError);
+          onError?.(setupError);
+        }
+        awaitingIdleRef.current = false;
+        setAwaitingFirstResponse(false);
+        setStatus("error");
+        clearStepRetryStatus();
+        pendingMessageRef.current = null;
+        promptRequestIdsRef.current.clear();
+        cancelRequestIdsRef.current.clear();
+        initializeIdRef.current = null;
+        replayIdRef.current = null;
+        initializeRetryCountRef.current = 0;
+        if (historyCompleteTimeoutRef.current !== null) {
+          window.clearTimeout(historyCompleteTimeoutRef.current);
+          historyCompleteTimeoutRef.current = null;
+        }
+        setIsReplayingHistory(false);
+        isReplayingRef.current = false;
+        completeStreamingMessages();
+      };
+
       try {
         if (registerPerSessionListener) {
           const unlisten = onWireMessage(sessionId, (message) => {
@@ -4807,8 +4975,8 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
                 }
               }
             }, 15_000);
-          })
-          .catch(handleTauriConnectError);
+          }, handleTauriConnectError)
+          .catch(handleTauriPostConnectError);
       } catch (err) {
         handleTauriConnectError(err);
       }
@@ -5209,13 +5377,15 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
     setPermissionMode(mode);
 
     const connection = wsRef.current;
-    const canFlushImmediately =
+    // Permission mode hot-switches even mid-turn (issue #13): any open,
+    // initialized connection may carry the write. While busy, drain only the
+    // permission update so queued plan/swarm/goal writes keep waiting for idle.
+    const canSendNow =
       connection?.readyState === STREAM_OPEN &&
-      statusRef.current === "ready" &&
       initializeIdRef.current === null &&
       replayIdRef.current === null;
-    if (canFlushImmediately && connection) {
-      void flushPendingModeUpdates(connection).catch((error) => {
+    if (canSendNow && connection) {
+      void flushPendingModeUpdates(connection, statusRef.current !== "ready").catch((error) => {
         console.warn("[SessionStream] Failed to set permission mode:", error);
       });
       return true;
@@ -5461,7 +5631,7 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
               error: true,
             };
           }
-          // Resume is performed by the following Goal-aware ACP prompt:
+          // Resume is performed by the following Goal-aware runtime prompt:
           // Kimi's native GetGoal/UpdateGoal tools reactivate the existing
           // state, then its own multi-turn Goal driver continues the work.
         } catch (err) {
@@ -5858,21 +6028,44 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
         isReplayingRef.current = true;
         setIsReplayingHistory(true);
 
+        let replayBuffer: { messages: LiveMessage[] } | null = null;
         try {
           const historyMessages = await replaySessionHistory(targetSessionId);
           if (!isCurrent()) {
             return;
           }
+          replayBuffer = { messages };
+          historyReplayBufferRef.current = replayBuffer;
           await replayHistoryMessagesInBatches(
             historyMessages,
             (message) => handleMessageRef.current(message),
             () => !isCurrent(),
+            (hasMore) => {
+              if (!hasMore || historyReplayBufferRef.current !== replayBuffer || !replayBuffer) {
+                return;
+              }
+              flushBufferedStreamUpdateRef.current();
+              historyReplayBufferRef.current = null;
+              setMessagesInternal(replayBuffer.messages);
+              replayBuffer = { messages };
+              historyReplayBufferRef.current = replayBuffer;
+            },
           );
           if (!isCurrent()) {
+            if (historyReplayBufferRef.current === replayBuffer) {
+              historyReplayBufferRef.current = null;
+            }
             return;
           }
-          flushInlineThinkBufferRef.current(true);
-          flushBufferedStreamUpdateRef.current();
+          if (historyReplayBufferRef.current === replayBuffer && replayBuffer) {
+            flushInlineThinkBufferRef.current(true);
+            flushBufferedStreamUpdateRef.current();
+            historyReplayBufferRef.current = null;
+            setMessagesInternal(replayBuffer.messages);
+          } else {
+            flushInlineThinkBufferRef.current(true);
+            flushBufferedStreamUpdateRef.current();
+          }
           void syncGoalSnapshot(targetSessionId).catch((error) => {
             console.warn("[SessionStream] Failed to restore Goal after history replay:", error);
           });
@@ -5895,6 +6088,9 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
           // omitted them.
           applyPersistedModes();
         } catch (err) {
+          if (historyReplayBufferRef.current === replayBuffer) {
+            historyReplayBufferRef.current = null;
+          }
           if (!isCurrent()) {
             return;
           }
@@ -5948,7 +6144,6 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
    */
   const handleWireMessage = (message: string): void => {
     lastWsMessageTimeRef.current = Date.now();
-    setField("lastEventAt", Date.now());
     handleMessage(message);
     // Ref mirrors update at wire boundaries (the former render-time sync).
     syncRefsFromState();
@@ -5961,7 +6156,15 @@ export function createSessionRuntime(initialOptions: SessionRuntimeOptions): Ses
     onError = nextOptions.onError;
     onSessionStatus = nextOptions.onSessionStatus;
     onFirstTurnComplete = nextOptions.onFirstTurnComplete;
-    registerPerSessionListener = nextOptions.registerPerSessionListener ?? true;
+    // Only an explicit value may change the transport mode. The G5 orchestrator
+    // creates engines with registerPerSessionListener=false and owns wire
+    // dispatch via its single global listener; option refreshes from the React
+    // adapter omit this field, and resetting it to true here re-enabled the
+    // per-session listener on the next connect, applying every live wire
+    // message twice (duplicated text deltas / tool cards, issue #12).
+    if (typeof nextOptions.registerPerSessionListener === "boolean") {
+      registerPerSessionListener = nextOptions.registerPerSessionListener;
+    }
     // Option forwarding only. The state-derived ref mirrors are synced at
     // wire-event / action boundaries (syncRefsFromState) so that timer-driven
     // state changes behave like the former render-deferred ref sync.

@@ -42,7 +42,7 @@ pub fn list_available_skills() -> Result<Value, String> {
 pub fn discover_skills() -> Vec<DiscoveredSkill> {
     let mut roots: Vec<(PathBuf, String)> = Vec::new();
 
-    if let Ok(home) = user_home_dir() {
+    if let Ok(home) = runtime_check::user_home_dir() {
         roots.push((home.join(".agents").join("skills"), "user".to_string()));
     }
 
@@ -231,14 +231,6 @@ fn unquote(value: &str) -> String {
         .and_then(|v| v.strip_suffix('"'))
         .or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')));
     inner.unwrap_or(value).trim().to_string()
-}
-
-fn user_home_dir() -> Result<PathBuf, String> {
-    std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .ok_or_else(|| "Unable to resolve user home directory".to_string())
 }
 
 #[cfg(test)]

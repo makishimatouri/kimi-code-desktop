@@ -1,5 +1,7 @@
 # Kimi Code Desktop UI V2 重写设计（Monochrome Pro）
 
+> **文档状态（2026-08-09）：已落地的历史设计。** 本文中的 ACP 接线、旧目录和一次性迁移步骤只描述 V2 重写当时状态；当前 Runtime 与结构契约见根 `AGENTS.md`、[`.github/DEVELOPMENT.md`](../../../.github/DEVELOPMENT.md) 和 [`docs/plans/README.md`](../../plans/README.md)。
+
 日期：2026-07-18
 状态：已与需求方逐节评审并定稿（视觉稿见 `assets/ui-v2-mockup.html`）
 

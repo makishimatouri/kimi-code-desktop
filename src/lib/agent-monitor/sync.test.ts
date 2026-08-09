@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { useAgentMonitorStore } from "./store";
 import {
-  clearAgentMonitorSession,
   syncAgentMonitorFromSubagentEvent,
   syncAgentMonitorFromSubagentLifecycle,
   syncAgentMonitorFromTaskCompleted,
@@ -11,7 +10,7 @@ import {
 
 describe("agent monitor event synchronization", () => {
   beforeEach(() => {
-    useAgentMonitorStore.setState({ tasks: [], selectedTaskId: null });
+    useAgentMonitorStore.setState({ tasks: [] });
   });
 
   it("maps task events without inventing per-agent progress", () => {
@@ -111,6 +110,8 @@ describe("agent monitor event synchronization", () => {
         session_id: "session-1",
         agent_id: "agent-2",
         parent_tool_call_id: "swarm-2",
+        parent_agent_id: "agent-1",
+        swarm_depth: 1,
         subagent_type: "coder",
         description: "Implement tests",
         phase: "spawned",
@@ -126,6 +127,8 @@ describe("agent monitor event synchronization", () => {
     });
     expect(useAgentMonitorStore.getState().tasks[0]).toMatchObject({
       status: "running",
+      parentAgentId: "agent-1",
+      swarmDepth: 1,
     });
     syncAgentMonitorFromSubagentLifecycle({
       type: "SubagentLifecycle",
@@ -155,9 +158,42 @@ describe("agent monitor event synchronization", () => {
       currentStep: "Running ReadFile",
       parentToolCallId: "legacy-parent",
     });
+  });
 
-    clearAgentMonitorSession("session-1");
-    expect(useAgentMonitorStore.getState().tasks).toEqual([]);
+  it("keeps swarm provenance when a later task snapshot omits it", () => {
+    syncAgentMonitorFromSubagentLifecycle({
+      type: "SubagentLifecycle",
+      payload: {
+        session_id: "session-1",
+        agent_id: "agent-stable",
+        parent_tool_call_id: "swarm-stable",
+        parent_agent_id: "main",
+        swarm_index: 0,
+        swarm_depth: 0,
+        phase: "queued",
+      },
+    });
+
+    syncAgentMonitorFromTaskCreated({
+      type: "TaskCreated",
+      payload: {
+        session_id: "session-1",
+        task: {
+          id: "agent-stable",
+          kind: "subagent",
+          description: "Review auth",
+          status: "running",
+        },
+      },
+    });
+
+    expect(useAgentMonitorStore.getState().tasks[0]).toMatchObject({
+      parentToolCallId: "swarm-stable",
+      parentAgentId: "main",
+      swarmIndex: 0,
+      swarmDepth: 0,
+      status: "running",
+    });
   });
 
   it("keeps running/in_progress TaskCompleted events active instead of checking them off", () => {
@@ -224,6 +260,40 @@ describe("agent monitor event synchronization", () => {
     });
     expect(useAgentMonitorStore.getState().tasks[0]).toMatchObject({
       status: "success",
+    });
+  });
+
+  it("does not fabricate a startedAt at completion time for out-of-order tasks", () => {
+    syncAgentMonitorFromTaskCompleted({
+      type: "TaskCompleted",
+      payload: {
+        session_id: "session-1",
+        task_id: "agent-late",
+        status: "completed",
+      },
+    });
+    const task = useAgentMonitorStore.getState().tasks[0];
+    expect(task).toMatchObject({
+      id: "agent-late",
+      status: "success",
+    });
+    expect(task.startedAt).toBeUndefined();
+    expect(task.completedAt).toEqual(expect.any(Number));
+  });
+
+  it("carries run_in_background through lifecycle and task events", () => {
+    syncAgentMonitorFromSubagentLifecycle({
+      type: "SubagentLifecycle",
+      payload: {
+        session_id: "session-1",
+        agent_id: "agent-bg",
+        phase: "queued",
+        run_in_background: true,
+      },
+    });
+    expect(useAgentMonitorStore.getState().tasks[0]).toMatchObject({
+      id: "agent-bg",
+      runInBackground: true,
     });
   });
 });

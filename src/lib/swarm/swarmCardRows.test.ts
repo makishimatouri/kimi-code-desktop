@@ -22,6 +22,55 @@ function task(partial: Partial<AgentTask> & Pick<AgentTask, "id">): AgentTask {
 }
 
 describe("swarm card rows", () => {
+  it("shows planned items as queued before lifecycle events arrive", () => {
+    const rows = buildSwarmCardRows([], null, [
+      { name: "Auth", index: 0 },
+      { name: "Docs", index: 1 },
+    ]);
+
+    expect(rows).toEqual([
+      {
+        id: "planned-0",
+        name: "Auth",
+        activity: "",
+        phase: "queued",
+        body: "",
+        depth: 0,
+        topLevel: true,
+      },
+      {
+        id: "planned-1",
+        name: "Docs",
+        activity: "",
+        phase: "queued",
+        body: "",
+        depth: 0,
+        topLevel: true,
+      },
+    ]);
+  });
+
+  it("replaces a planned row by swarm index without shrinking the total", () => {
+    const members = [
+      agentTaskToSwarmMember(
+        task({
+          id: "agent-docs",
+          description: "Docs agent",
+          status: "running",
+          swarmIndex: 1,
+        }),
+      ),
+    ];
+    const rows = buildSwarmCardRows(members, null, [
+      { name: "Auth", index: 0 },
+      { name: "Docs", index: 1 },
+    ]);
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ name: "Auth", phase: "queued" });
+    expect(rows[1]).toMatchObject({ id: "agent-docs", phase: "working" });
+  });
+
   it("maps terminal agent statuses over stale phases", () => {
     expect(
       phaseForAgentTask(task({ id: "1", status: "cancelled", subagentPhase: "working" })),
@@ -32,16 +81,85 @@ describe("swarm card rows", () => {
     expect(phaseForAgentTask(task({ id: "3", status: "queued" }))).toBe("queued");
   });
 
-  it("resolves swarm members by parentToolCallId and swarmIndex", () => {
+  it("keeps nested subagents under their parent without replacing planned roots", () => {
+    const members = [
+      agentTaskToSwarmMember(
+        task({
+          id: "root-a",
+          description: "A",
+          parentToolCallId: "swarm-1",
+          swarmIndex: 0,
+          swarmDepth: 0,
+        }),
+      ),
+      agentTaskToSwarmMember(
+        task({
+          id: "nested-a1",
+          description: "A.1",
+          parentToolCallId: "swarm-1",
+          parentAgentId: "root-a",
+          swarmIndex: 0,
+          swarmDepth: 1,
+        }),
+      ),
+    ];
+
+    const rows = buildSwarmCardRows(members, null, [
+      { name: "A", index: 0 },
+      { name: "B", index: 1 },
+    ]);
+
+    expect(rows.map((row) => [row.id, row.depth, row.topLevel])).toEqual([
+      ["root-a", 0, true],
+      ["nested-a1", 1, false],
+      ["planned-1", 0, true],
+    ]);
+  });
+
+  it("counts a direct member as top-level relative to its own nested swarm", () => {
+    const rows = buildSwarmCardRows(
+      [
+        agentTaskToSwarmMember(
+          task({
+            id: "nested-member",
+            parentToolCallId: "nested-swarm",
+            parentAgentId: "outer-agent",
+            swarmIndex: 0,
+            swarmDepth: 1,
+          }),
+        ),
+      ],
+      null,
+      [{ name: "Nested work", index: 0 }],
+    );
+
+    expect(rows).toEqual([
+      expect.objectContaining({ id: "nested-member", depth: 0, topLevel: true }),
+    ]);
+  });
+
+  it("resolves direct members and descendants with their own nested swarm call ids", () => {
     const members = resolveSwarmMembers(
       [
         task({ id: "b", parentToolCallId: "swarm-1", swarmIndex: 1, description: "Second" }),
         task({ id: "a", parentToolCallId: "swarm-1", swarmIndex: 0, description: "First" }),
+        task({
+          id: "a-child",
+          parentToolCallId: "swarm-inside-a",
+          parentAgentId: "a",
+          swarmIndex: 0,
+        }),
+        task({
+          id: "a-grandchild",
+          parentToolCallId: "swarm-inside-child",
+          parentAgentId: "a-child",
+          swarmIndex: 0,
+        }),
         task({ id: "x", parentToolCallId: "other", swarmIndex: 0 }),
       ],
       "swarm-1",
     );
-    expect(members.map((m) => m.id)).toEqual(["a", "b"]);
+    expect(members.map((m) => m.id)).toEqual(["a", "a-child", "a-grandchild", "b"]);
   });
 
   it("prefers live members and appends aborted result-only rows", () => {
@@ -91,6 +209,8 @@ describe("swarm card rows", () => {
         activity: "All good",
         phase: "completed",
         body: "All good",
+        depth: 0,
+        topLevel: true,
       },
     ]);
   });

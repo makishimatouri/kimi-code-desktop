@@ -1,5 +1,7 @@
 # 桌面端模型管理 / Thinking 切换 Implementation Plan
 
+> **文档状态（2026-08-09）：历史实施记录。** 本文中的 ACP worker 重启路径已被 RuntimeHost/Source Runtime 配置链替代；配置真相源与当前接线以源码、`.github/FEATURE_IMPLEMENTATION.md` 和 M4 完成态为准。
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** 聊天区就地切换模型；支持 thinking 的模型可开关；Settings 只保留「配置/管理」，不再作为日常切换入口。

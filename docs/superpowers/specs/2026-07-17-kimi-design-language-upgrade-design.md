@@ -1,5 +1,7 @@
 # Kimi 设计语言升级 · 设计文档
 
+> **文档状态（2026-08-09）：历史设计记录。** 该方案用于追溯 Monochrome V2 之前的设计决策；当前组件目录、视觉 tokens 与实现约束以运行源码和 [`.github/DEVELOPMENT.md`](../../../.github/DEVELOPMENT.md) 为准。
+
 日期：2026-07-17
 范围：kimi-code-desktop 前端（src/），不改 Rust、不改业务逻辑、不改功能行为
 方向：符合 Kimi 品牌设计语言的 AI coding 工具；双主题并重；组件层先行，分波迁移

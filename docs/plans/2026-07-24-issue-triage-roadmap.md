@@ -1,5 +1,7 @@
 # 2026-07-24：17 项问题修复路线图 / Issue Triage Roadmap
 
+> **文档状态（2026-08-09）：历史排期与完成记录。** 正文中的工作区快照、ACP smoke 命令和旧路径不得用于当前开发；现行命令与边界见根 `AGENTS.md` 和 `.github/DEVELOPMENT.md`。
+
 来源：用户手机待办清单（两张截图，共 17 项）。所有根因已通过代码调查定位到具体文件。
 本文件为排期规划。P0 七项已于 2026-07-24 落地（并按 MoonshotAI/kimi-cli 核对过 Escape / TaskCompleted 语义）。
 

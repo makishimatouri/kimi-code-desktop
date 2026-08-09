@@ -1,5 +1,7 @@
 # Command Result Panel Design
 
+> **文档状态（2026-08-09）：历史设计记录。** `/usage` 与 `/status` 的当前实现由桌面本地 Source Runtime/平台额度路径承载；本文用于解释 UI 决策，不作为 Runtime 接线说明。
+
 **Goal:** Show `/usage` and `/status` in a temporary panel above the composer instead of appending chat messages.
 
 ## Decisions
