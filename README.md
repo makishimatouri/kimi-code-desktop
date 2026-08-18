@@ -20,7 +20,7 @@
 
 Kimi Code Desktop 将 Kimi Code 的终端智能体能力带进一个专注、可视、可管理的桌面界面。它不是另一套 AI 运行时：会话、模型、工具调用与智能体能力仍由用户安装的 Kimi Code CLI 提供，桌面端通过 ACP（`kimi acp`）连接，并负责交互、工作区呈现与 Windows / macOS 系统集成。
 
-> 当前源码版本为 `1.1.1`，面向 Windows 与 macOS（Apple Silicon）。
+> 当前源码版本为 `1.1.4`，面向 Windows 与 macOS（Intel 与 Apple Silicon）。
 
 ## 你可以用它做什么
 
@@ -32,7 +32,7 @@ Kimi Code Desktop 将 Kimi Code 的终端智能体能力带进一个专注、可
 - **查看用量与上下文**：展示当前上下文窗口、Token 明细、平台额度，以及今日 / 7 天 / 30 天本地用量趋势；`/usage` 与 `/status` 会在 Composer 上方即时呈现结果。
 - **任务状态一目了然**：状态条实时显示 `[N task running]`（与 CLI 一致）；后台任务与 Cron 调度在 Tasks 面板只读展示；子代理步骤支持任意层级嵌套，子代理派生的子代理也有独立可折叠视图。
 - **融入 Windows**：提供系统托盘、任务完成与审批通知、全局快捷键，并确保重复启动时聚焦已有窗口。
-- **原生 macOS 体验**：Apple Silicon 原生构建、Finder 中显示、`super+shift+k` 快捷键、原生菜单（含界面语言切换）、自动探测 Homebrew / uv 安装的 Kimi CLI。
+- **原生 macOS 体验**：Intel 与 Apple Silicon 原生构建、Finder 中显示、`super+shift+k` 快捷键、原生菜单（含界面语言切换）、自动探测 `~/.kimi-code/bin`、Homebrew / uv 安装的 Kimi CLI。
 - **中英界面即时切换**：界面语言支持跟随系统 / English / 简体中文，无需重启。
 - **直接管理运行时配置**：在设置中切换深浅主题、编辑全局配置与原始 `config.toml`、管理 MCP Server，并可启用与配置实验性的 Secondary model。
 
@@ -59,7 +59,15 @@ React 19 + Vite
 
 ### 1. 安装并配置 Kimi Code CLI
 
-确保 `kimi` 命令位于 `PATH`，并在 `~/.kimi-code/config.toml` 中配置可用的模型与 provider：
+确保 `kimi` 命令位于 `PATH`，并在 `~/.kimi-code/config.toml` 中配置可用的模型与 provider。macOS 桌面端也会自动搜索官方安装器使用的 `~/.kimi-code/bin`。
+
+macOS / Linux：
+
+```bash
+curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash
+```
+
+Windows PowerShell：
 
 ```powershell
 irm https://code.kimi.com/kimi-code/install.ps1 | iex
@@ -75,7 +83,7 @@ kimi migrate
 
 ### 2. 安装桌面应用
 
-从 [GitHub Releases](https://github.com/P-A-N-52/kimi-code-desktop/releases) 下载最新 MSI。安装包只包含桌面外壳，不会复制、覆盖或删除你的 Kimi Code CLI 配置与会话数据。
+从 [GitHub Releases](https://github.com/P-A-N-52/kimi-code-desktop/releases) 下载与你的系统和处理器匹配的 MSI 或 DMG。安装包只包含桌面外壳，不会复制、覆盖或删除你的 Kimi Code CLI 配置与会话数据。
 
 首次启动时，应用会检查 `kimi`、`kimi acp` 和 `~/.kimi-code/config.toml`，再加载本地会话；不会把 Kimi 账号登录状态作为启动条件。
 
@@ -107,22 +115,28 @@ npm run smoke:acp         # 验证本机 kimi acp
 ```powershell
 npm run desktop:release   # 本地可运行的 release exe
 npm run release:msi       # MSI 与发布元数据
-npm run release:macos     # Apple Silicon DMG（仅在 macOS）
+npm run release:macos     # 默认生成 Apple Silicon DMG（仅在 macOS）
+KIMI_MACOS_TARGET=x86_64-apple-darwin npm run release:macos  # Intel DMG
 npm run release:preflight # 完整发布前检查
 ```
 
-### macOS Apple Silicon
+### macOS Intel 与 Apple Silicon
 
-macOS 桌面包当前仅支持 Apple Silicon（`aarch64-apple-darwin`）和 macOS 12
-及以上版本。发布工作流会生成 DMG，并按以下顺序选择信任级别：
+macOS 桌面包支持 macOS 12 及以上版本，并分别提供以下原生目标：
+
+- Apple Silicon：`aarch64-apple-darwin`
+- Intel：`x86_64-apple-darwin`
+
+发布工作流会为两种架构生成独立 DMG，并按以下顺序选择信任级别：
 
 1. Apple Developer ID 签名并公证；
 2. 缺少凭据或签名/公证失败时使用 ad-hoc 签名；
 3. ad-hoc 构建失败时生成未签名包。
 
-工作流产物中的 `release-manifest-macos-arm64.json` 会记录实际使用的
-`signingMode`、`notarizationStatus` 和降级原因。ad-hoc 或未签名包可能需要用户在
-macOS“隐私与安全性”中手动允许。
+工作流产物中的 `release-manifest-macos-arm64.json` 和
+`release-manifest-macos-x64.json` 会记录实际使用的 `arch`、`target`、`signingMode`、
+`notarizationStatus` 和降级原因。ad-hoc 或未签名包可能需要用户在 macOS“隐私与安全性”
+中手动允许。
 
 完整签名和公证使用以下 GitHub Actions secrets：
 
@@ -144,15 +158,17 @@ src-tauri\target\release\bundle\msi\Kimi Code_<version>_x64_en-US.msi
 macOS 产物位置：
 
 ```text
-src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Kimi Code_<version>_aarch64.dmg
+src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Kimi.Code_<version>_aarch64.dmg
 src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Kimi Code.app
+src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Kimi.Code_<version>_x64.dmg
+src-tauri/target/x86_64-apple-darwin/release/bundle/macos/Kimi Code.app
 ```
 
 不要使用裸 `cargo build --release` 代替桌面构建；它会绕过 Tauri 的前端构建流程。
 
 ## 当前边界
 
-- 目前支持 Windows 与 macOS（Apple Silicon）；macOS 构建默认不签名、不公证，正式分发需要配置 Apple 开发者凭据。
+- 目前支持 Windows 与 macOS（Intel、Apple Silicon）；macOS 构建默认不签名、不公证，正式分发需要配置 Apple 开发者凭据。
 - 运行时必须能够访问已安装、已配置可用 provider 的 Kimi Code CLI，不要求 Kimi 账号登录，也不提供 legacy sidecar fallback。
 - 当前提供手动深色 / 浅色切换；跟随系统主题尚未接入。
 - ACP 尚不支持 fork-at-turn，因此桌面端不会伪造会话分叉能力。
